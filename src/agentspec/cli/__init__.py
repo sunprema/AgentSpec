@@ -34,6 +34,35 @@ def build_parser() -> argparse.ArgumentParser:
             )
             sub.add_argument("--json", action="store_true", help="emit results as JSON")
             continue
+        if name == "run":
+            sub.add_argument("spec", help="path to a .aspec.py file")
+            sub.add_argument("--task", help="task to run (default: the root task)")
+            sub.add_argument("--context", default="", help="freeform dispatch context")
+            sub.add_argument(
+                "--input",
+                action="append",
+                default=[],
+                metavar="NAME=VALUE",
+                help="a task input (VALUE parsed as JSON when possible); repeatable",
+            )
+            sub.add_argument(
+                "--adapter-cmd",
+                help="shell command that reads a prompt on stdin and prints "
+                "the model reply, e.g. 'claude -p'",
+            )
+            sub.add_argument(
+                "--max-repairs",
+                type=int,
+                default=2,
+                help="bounded-repair attempts per guarded call (default 2)",
+            )
+            sub.add_argument(
+                "--orchestrate",
+                action="store_true",
+                help="one guarded subagent per step instead of a single agent",
+            )
+            sub.add_argument("--json", action="store_true", help="emit the result as JSON")
+            continue
         sub.add_argument("spec", nargs="+", help="path to a .aspec.py file")
         if name == "lint":
             sub.add_argument("--json", action="store_true", help="emit diagnostics as JSON")
@@ -68,6 +97,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_fmt(args)
     if args.command == "eval":
         return cmd_eval(args)
+    if args.command == "run":
+        return cmd_run(args)
     print(f"aspec {args.command}: not implemented yet", file=sys.stderr)
     return 2
 
@@ -223,6 +254,61 @@ def cmd_eval(args: argparse.Namespace) -> int:
     else:
         print("\n\n".join(render_report(r) for r in reports))
     return 0 if all(r.passed for r in reports) else 1
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    import shlex
+
+    from agentspec.eval import EvalError, subprocess_adapter
+    from agentspec.run import RunError, orchestrate, run_routine
+
+    if not args.adapter_cmd:
+        print(
+            "aspec run: an adapter is required — e.g. --adapter-cmd 'claude -p' "
+            "(any command that reads a prompt on stdin and prints the reply)",
+            file=sys.stderr,
+        )
+        return 2
+    inputs: dict = {}
+    for pair in args.input:
+        name, sep, value = pair.partition("=")
+        if not sep:
+            print(f"aspec run: --input expects NAME=VALUE, got '{pair}'", file=sys.stderr)
+            return 2
+        try:
+            inputs[name] = json.loads(value)
+        except json.JSONDecodeError:
+            inputs[name] = value
+    adapter = subprocess_adapter(shlex.split(args.adapter_cmd))
+    runner = orchestrate if args.orchestrate else run_routine
+    try:
+        result = runner(
+            args.spec,
+            adapter,
+            context=args.context,
+            inputs=inputs,
+            task_name=args.task,
+            max_repairs=args.max_repairs,
+        )
+    except (OSError, RunError, EvalError) as exc:
+        print(f"aspec run: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(result.model_dump(), indent=2, default=str))
+    else:
+        print(
+            f"{result.task} [{result.mode}] — {result.status} "
+            f"({result.adapter_calls} adapter call(s))"
+        )
+        for step in result.steps:
+            print(f"  {step.status:18} {step.var} = {step.task}")
+        if result.report:
+            print(result.report)
+        for note in result.notes:
+            print(f"  note: {note}")
+        if result.output is not None:
+            print(json.dumps(result.output, indent=2, default=str))
+    return 0 if result.status != "aborted" else 1
 
 
 if __name__ == "__main__":

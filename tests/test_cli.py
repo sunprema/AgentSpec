@@ -6,8 +6,6 @@ import pytest
 from agentspec import __version__
 from agentspec.cli import SUBCOMMANDS, main
 
-STUB_COMMANDS = [c for c in SUBCOMMANDS if c not in ("lint", "plan", "graph", "fmt", "eval")]
-
 
 def test_version(capsys):
     with pytest.raises(SystemExit) as exc:
@@ -21,11 +19,9 @@ def test_no_command_prints_help(capsys):
     assert "lint" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("command", STUB_COMMANDS)
-def test_unimplemented_subcommands_are_stubs(command, capsys, fixtures_dir):
-    spec = str(fixtures_dir / "minimal_good.aspec.py")
-    assert main([command, spec]) == 2
-    assert "not implemented" in capsys.readouterr().err
+def test_every_subcommand_is_implemented():
+    # No stubs remain: every advertised subcommand has a handler.
+    assert set(SUBCOMMANDS) == {"lint", "plan", "graph", "fmt", "eval", "run"}
 
 
 @pytest.mark.parametrize(
@@ -219,6 +215,49 @@ def test_eval_pass_and_fail_exit_codes(capsys, tmp_path, fixtures_dir):
     eval_file, adapter = _write_eval_setup(tmp_path, fixtures_dir, bad)
     assert main(["eval", "--adapter-cmd", f"{_sys.executable} {adapter}", str(eval_file)]) == 1
     assert "FAIL" in capsys.readouterr().out
+
+
+def test_run_requires_an_adapter(capsys, fixtures_dir):
+    assert main(["run", str(fixtures_dir / "minimal_good.aspec.py")]) == 2
+    assert "--adapter-cmd" in capsys.readouterr().err
+
+
+def test_run_single_agent_cli(capsys, tmp_path, fixtures_dir):
+    import sys as _sys
+
+    reply = '## Run report\\nall inferred\\n{"filed": false, "tracker_id": ""}'
+    adapter = tmp_path / "adapter.py"
+    adapter.write_text(f"import sys\nsys.stdin.read()\nprint('{reply}')\n")
+    exit_code = main(
+        [
+            "run",
+            "--adapter-cmd",
+            f"{_sys.executable} {adapter}",
+            "--context",
+            "triage the inbox",
+            "--json",
+            str(fixtures_dir / "minimal_good.aspec.py"),
+        ]
+    )
+    assert exit_code == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "conforming"
+    assert result["output"] == {"filed": False, "tracker_id": ""}
+
+
+def test_run_bad_input_flag(capsys, fixtures_dir):
+    exit_code = main(
+        [
+            "run",
+            "--adapter-cmd",
+            "true",
+            "--input",
+            "not-a-pair",
+            str(fixtures_dir / "minimal_good.aspec.py"),
+        ]
+    )
+    assert exit_code == 2
+    assert "NAME=VALUE" in capsys.readouterr().err
 
 
 def test_eval_json_output(capsys, tmp_path, fixtures_dir):

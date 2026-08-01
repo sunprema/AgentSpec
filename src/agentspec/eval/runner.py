@@ -97,7 +97,14 @@ def _run_case(module, task, output_model, case: EvalCase, adapter: Adapter) -> C
     return CaseResult(name=case.name, passed=not failures, failures=failures, output=output)
 
 
-def render_prompt(module: SpecModule, task: TaskDef, inputs: dict[str, Any], output_model) -> str:
+def render_prompt(
+    module: SpecModule,
+    task: TaskDef,
+    inputs: dict[str, Any],
+    output_model,
+    *,
+    extra_rules: list | None = None,
+) -> str:
     lines = [
         "You are the runtime for one task of an AgentSpec routine "
         "(see AgentSpec: the spec is data, the model is the runtime).",
@@ -106,9 +113,16 @@ def render_prompt(module: SpecModule, task: TaskDef, inputs: dict[str, Any], out
         f"# Task: {task.name}",
         task.docstring or "",
     ]
-    if task.constraints:
+    # A parent task's constraints bind every step inside it (spec §5); shared
+    # rule lists appear in both, so dedupe by text.
+    rules, seen = [], set()
+    for rule in list(extra_rules or []) + list(task.constraints):
+        if rule.text not in seen:
+            seen.add(rule.text)
+            rules.append(rule)
+    if rules:
         lines += ["", "# Rules"]
-        for rule in task.constraints:
+        for rule in rules:
             why = f" — why: {rule.why}" if rule.why else ""
             lines.append(f"- ({rule.severity}) {rule.text}{why}")
     if task.on_uncertain is not None:

@@ -198,14 +198,26 @@ static. Gate spec changes like code changes.
 
 Last, and deliberately thin — AgentSpec must not become a runtime framework.
 
-- [ ] Guarded single-agent run: dispatch context → root task, outputs
-      validated against declared schemas, violations fed back verbatim for
-      bounded repair
-- [ ] Declared `on_failure` honored when conformance cannot be reached
-- [ ] `orchestrate`: optional one-subagent-per-step mode, each receiving only
-      its own pruned contract plus inherited constraints
-- [ ] Run report records tool substitutions, rule conflicts, and
-      verified-vs-inferred claims (§9 non-negotiables)
+- [x] Guarded single-agent run: dispatch context → root task (freeform text
+      flows into `freeform_context`, spec §9), outputs validated against
+      declared schemas, violations fed back verbatim for bounded repair
+      (`--max-repairs`, default 2)
+- [x] Declared `on_failure` honored when conformance cannot be reached:
+      literal → declared fallback, abort → aborted (with saga unwind in
+      orchestrate mode), Retry → fresh guarded attempts then `then`,
+      Escalate → recorded (this harness has no waiting channel) then `then`
+- [x] `--orchestrate`: one guarded subagent per step — the harness derives
+      the schedule from the binds, resolves data flow/gates/fan-out/filters
+      mechanically (real `env` values, §10), each subagent receives only its
+      pruned contract plus the orchestrator's inherited constraints (deduped,
+      §5), `on_item_failure` honored per item, the orchestrator-as-reducer
+      runs as a final guarded call, and abort unwinds completed steps via
+      their declared `undo` in reverse order
+- [x] Run report records tool substitutions, rule conflicts, and
+      verified-vs-inferred claims: the single-agent prompt mandates a
+      "## Run report" section (captured into `RunResult.report`); orchestrate
+      mode records skips, dropped fan-out items, escalations, and unwind
+      reports in `RunResult.notes`/`steps`
 
 ## Later / stretch (tracked, not scheduled)
 
@@ -223,6 +235,19 @@ questions the spec must answer). Semantic ambiguities discovered while
 building the toolchain are spec bugs — fix the spec, then the tool.
 
 - 2026-08-01 — Plan created.
+- 2026-08-01 — Phase 7 complete (`aspec run` / `--orchestrate`); all six
+  subcommands are now implemented. Semantics decisions: (1) `Escalate` in a
+  CLI harness cannot deliver or wait — it is recorded in notes and its
+  declared `then` applies immediately; a future harness with a channel can
+  do better, but the spec's semantics are preserved (never ask, always
+  terminate through declared behavior). (2) A step returning its declared
+  literal fallback is NOT counted as "completed" for unwind purposes — only
+  fully conforming steps are unwound, the conservative reading of §8.
+  (3) `declared_fallback` exits 0: a declared fallback is a legitimate,
+  reviewed outcome, not an error. (4) The orchestrate harness resolves all
+  data flow itself (gates, filters, fan-out, env) so subagents never see the
+  pipeline — each gets exactly its pruned contract plus inherited
+  constraints, deduped by rule text.
 - 2026-08-01 — Phase 6 complete (`aspec eval`). Format choices: TOML over
   YAML (stdlib, no new dependency) and over Python (eval files must stay
   data). The assertion operators are a deliberately closed set — richer
