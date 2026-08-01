@@ -1,0 +1,245 @@
+"""The SpecModel: the typed, in-memory form of a parsed `.aspec.py` file.
+
+Every later tool (lint, plan, graph, fmt) consumes this model; nothing
+outside the parser touches raw AST.
+"""
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+
+from agentspec.diagnostics import Diagnostic
+
+
+class SourceLoc(BaseModel):
+    file: str
+    line: int = 0
+    col: int = 0
+
+
+class TypeExpr(BaseModel):
+    """A type annotation: a named type, a closed Enum/Literal set, or a list."""
+
+    kind: Literal["name", "enum", "list", "unknown"] = "name"
+    name: str | None = None  # kind == "name"
+    values: list[Any] = Field(default_factory=list)  # kind == "enum"
+    item: "TypeExpr | None" = None  # kind == "list"
+    optional: bool = False  # `X | None`
+    raw: str | None = None  # kind == "unknown"
+
+
+class SchemaField(BaseModel):
+    name: str
+    type: TypeExpr
+    # Field(...) bounds are part of the contract (spec §3).
+    ge: float | None = None
+    le: float | None = None
+    max_length: int | None = None
+    extra: dict[str, Any] = Field(default_factory=dict)
+    has_default: bool = False
+    default: Any = None
+    loc: SourceLoc
+
+
+class SchemaDef(BaseModel):
+    name: str
+    docstring: str | None = None
+    fields: list[SchemaField] = Field(default_factory=list)
+    loc: SourceLoc
+
+    def field(self, name: str) -> SchemaField | None:
+        return next((f for f in self.fields if f.name == name), None)
+
+
+class Rule(BaseModel):
+    """One constraint: ("text", "why"[, severity]) or a bare string (spec §5)."""
+
+    text: str
+    why: str | None = None
+    severity: Literal["must", "should", "may"] = "must"
+    bare: bool = False  # declared as a bare string
+    source: str | None = None  # constant name it was composed from, if any
+    loc: SourceLoc
+
+
+class ToolDecl(BaseModel):
+    name: str
+    ops: list[str] = Field(default_factory=list)
+    scripts: list[str] = Field(default_factory=list)
+    paths: list[str] = Field(default_factory=list)
+    strict: bool = False
+    exclusive: bool = False
+    extra: dict[str, Any] = Field(default_factory=dict)
+    loc: SourceLoc
+
+
+class FailurePolicy(BaseModel):
+    """on_failure / on_uncertain-adjacent declarations (spec §8)."""
+
+    kind: Literal["abort", "literal", "retry", "escalate"]
+    literal: Any = None  # kind == "literal"
+    max: int | None = None  # kind == "retry"
+    backoff_s: float | None = None  # kind == "retry"
+    channel: str | None = None  # kind == "escalate"
+    timeout_s: float | None = None  # kind == "escalate"
+    then: "FailurePolicy | None" = None  # retry/escalate continuation
+    loc: SourceLoc
+
+
+class AttrPath(BaseModel):
+    """A dotted reference: an input, a prior step's field, a loop var, or env."""
+
+    parts: list[str]
+
+    @property
+    def root(self) -> str:
+        return self.parts[0]
+
+    @property
+    def dotted(self) -> str:
+        return ".".join(self.parts)
+
+
+class ValueRef(BaseModel):
+    """A value in a pipeline bind: an attribute path or a literal."""
+
+    kind: Literal["path", "literal", "invalid"]
+    path: AttrPath | None = None
+    value: Any = None
+    raw: str
+    loc: SourceLoc
+
+
+class Filter(BaseModel):
+    """A fan-out filter, caged to `path in [literals]` or `path == literal`."""
+
+    valid: bool
+    path: AttrPath | None = None
+    op: Literal["in", "=="] | None = None
+    values: list[Any] = Field(default_factory=list)
+    raw: str
+
+
+class FanOut(BaseModel):
+    loop_var: str
+    source: ValueRef
+    filter: Filter | None = None
+
+
+class PipelineBind(BaseModel):
+    """One class-body assignment in an orchestrator: `var = TaskName(...)`,
+    optionally gated (`... if cond else None`) or fanned out (a comprehension)."""
+
+    var: str
+    task: str
+    kwargs: dict[str, ValueRef] = Field(default_factory=dict)
+    gate: ValueRef | None = None
+    fanout: FanOut | None = None
+    raw: str
+    loc: SourceLoc
+
+    def referenced_roots(self) -> set[str]:
+        """Roots of every attribute path this bind references (its own
+        fan-out loop variable excluded)."""
+        loop_var = self.fanout.loop_var if self.fanout is not None else None
+        roots = {
+            ref.path.root
+            for ref in self.kwargs.values()
+            if ref.path is not None and ref.path.root != loop_var
+        }
+        if self.gate is not None and self.gate.path is not None:
+            roots.add(self.gate.path.root)
+        if self.fanout is not None:
+            if self.fanout.source.path is not None:
+                roots.add(self.fanout.source.path.root)
+            filt = self.fanout.filter
+            if filt is not None and filt.path is not None and filt.path.root != loop_var:
+                roots.add(filt.path.root)
+        return roots
+
+
+class TaskInput(BaseModel):
+    name: str
+    type: TypeExpr
+    loc: SourceLoc
+
+
+class UnknownAttr(BaseModel):
+    """A non-reserved assignment that is not a pipeline bind (lint fodder)."""
+
+    name: str
+    raw: str
+    loc: SourceLoc
+
+
+class TaskDef(BaseModel):
+    name: str
+    docstring: str | None = None
+    inputs: list[TaskInput] = Field(default_factory=list)
+    returns: TypeExpr | None = None
+    tools: list[ToolDecl] = Field(default_factory=list)
+    constraints: list[Rule] = Field(default_factory=list)
+    undo: str | None = None
+    on_uncertain: dict[str, Any] | None = None
+    on_failure: FailurePolicy | None = None
+    on_item_failure: str | None = None
+    meta: dict[str, Any] | None = None
+    pipeline: list[PipelineBind] = Field(default_factory=list)
+    unknown_attrs: list[UnknownAttr] = Field(default_factory=list)
+    loc: SourceLoc
+
+    @property
+    def is_orchestrator(self) -> bool:
+        return bool(self.pipeline)
+
+    def bind(self, var: str) -> PipelineBind | None:
+        return next((b for b in self.pipeline if b.var == var), None)
+
+
+class SpecConstant(BaseModel):
+    """A module-level constant: a literal value, a rule list, or both readings."""
+
+    name: str
+    value: Any = None
+    rules: list[Rule] | None = None
+    loc: SourceLoc
+
+
+class ImportRecord(BaseModel):
+    module: str
+    names: list[str] = Field(default_factory=list)
+    kind: Literal["framework", "spec"]
+    resolved_path: str | None = None
+    loc: SourceLoc
+
+
+class SpecModule(BaseModel):
+    path: str
+    docstring: str | None = None
+    imports: list[ImportRecord] = Field(default_factory=list)
+    constants: dict[str, SpecConstant] = Field(default_factory=dict)
+    schemas: dict[str, SchemaDef] = Field(default_factory=dict)
+    tasks: dict[str, TaskDef] = Field(default_factory=dict)
+    diagnostics: list[Diagnostic] = Field(default_factory=list)
+
+    @property
+    def errors(self) -> list[Diagnostic]:
+        return [d for d in self.diagnostics if d.severity == "error"]
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors
+
+    def root_tasks(self) -> list[str]:
+        """Tasks no other task references (spec §9: the root task)."""
+        referenced = {b.task for t in self.tasks.values() for b in t.pipeline}
+        return [name for name in self.tasks if name not in referenced]
+
+    @property
+    def root_task(self) -> str | None:
+        roots = self.root_tasks()
+        return roots[0] if len(roots) == 1 else None
+
+
+TypeExpr.model_rebuild()
+FailurePolicy.model_rebuild()

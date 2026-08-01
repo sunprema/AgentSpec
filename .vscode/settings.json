@@ -1,0 +1,9 @@
+{
+  "python-envs.pythonProjects": [
+    {
+      "path": "docs/BookBank_routine.aspec.py",
+      "envManager": "ms-python.python:venv",
+      "packageManager": "ms-python.python:pip"
+    }
+  ]
+}

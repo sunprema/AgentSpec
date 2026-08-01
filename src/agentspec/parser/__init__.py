@@ -1,0 +1,46 @@
+"""Parse `.aspec.py` files into a typed SpecModel via `ast` — never by import."""
+
+from agentspec.parser.model import (
+    AttrPath,
+    FailurePolicy,
+    FanOut,
+    Filter,
+    ImportRecord,
+    PipelineBind,
+    Rule,
+    SchemaDef,
+    SchemaField,
+    SourceLoc,
+    SpecConstant,
+    SpecModule,
+    TaskDef,
+    TaskInput,
+    ToolDecl,
+    TypeExpr,
+    UnknownAttr,
+    ValueRef,
+)
+from agentspec.parser.parse import parse_file, parse_source
+
+__all__ = [
+    "AttrPath",
+    "FailurePolicy",
+    "FanOut",
+    "Filter",
+    "ImportRecord",
+    "PipelineBind",
+    "Rule",
+    "SchemaDef",
+    "SchemaField",
+    "SourceLoc",
+    "SpecConstant",
+    "SpecModule",
+    "TaskDef",
+    "TaskInput",
+    "ToolDecl",
+    "TypeExpr",
+    "UnknownAttr",
+    "ValueRef",
+    "parse_file",
+    "parse_source",
+]

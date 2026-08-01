@@ -1,0 +1,47 @@
+[project]
+name = "agentspec"
+version = "0.1.0"
+description = "Static toolchain for AgentSpec, a declarative specification language for autonomous AI routines"
+readme = "README.md"
+authors = [
+    { name = "Sundar Nambuvel", email = "sunprema@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.13.4",
+]
+
+[project.scripts]
+aspec = "agentspec.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.1",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests"]
+# Spec fixtures are data, not code — they intentionally violate Python idiom,
+# and reformatting them would destroy the layout under test.
+extend-exclude = ["tests/fixtures"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
