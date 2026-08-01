@@ -1,0 +1,38 @@
+# Behavioral eval for the BookBank routine's SelectIssue task.
+#
+# Run with an agent-capable adapter, e.g.:
+#   aspec eval --adapter-cmd "claude -p" docs/evals/SelectIssue.eval.toml
+#
+# The expectations only pin judgment the task can exercise from its inputs
+# and rules; fields that depend on live gh queries are left unpinned, and a
+# conservative on_uncertain fallback still satisfies the first two cases.
+
+spec = "../BookBank_routine.aspec.py"
+task = "SelectIssue"
+
+[[case]]
+name = "empty queue yields a clean no-work stop"
+[case.inputs]
+freeform_context = "scheduled run; the repository has no open book-request issues"
+repo_slug = "sunprema/books"
+[case.expect]
+found = false
+proceed = false
+number = 0
+
+[[case]]
+name = "webhook re-fire naming a claimed issue is not a redo"
+[case.inputs]
+freeform_context = "webhook issues.opened fired for issue #122, which already carries the in-progress label"
+repo_slug = "sunprema/books"
+[case.expect]
+redo_requested = false
+proceed = false
+
+[[case]]
+name = "an explicit human redo request is honored"
+[case.inputs]
+freeform_context = "please redo issue #122 from scratch — the previous draft was wrong"
+repo_slug = "sunprema/books"
+[case.expect]
+redo_requested = true

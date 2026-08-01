@@ -175,16 +175,24 @@ Derive execution order purely from the data-flow binds.
 The first phase that talks to a model; everything before this stays fully
 static. Gate spec changes like code changes.
 
-- [ ] Eval file format: known inputs, expected-output assertions, referencing
-      the spec's own declared schemas for validation
-- [ ] Schema validation of model output against declared contracts
-      (Pydantic, including `Field` bounds and closed enums)
-- [ ] Assertion language kept declarative (equality, membership, bounds — no
-      arbitrary code)
-- [ ] Runner with per-case pass/fail report and `--json`
-- [ ] Provider-independent model adapter boundary (one interface; concrete
-      adapters live outside the core)
-- [ ] At least one eval for the BookBank routine's `SelectIssue` task
+- [x] Eval file format: TOML (`.eval.toml`, stdlib `tomllib`) — `spec`,
+      optional `task` (default: root task), `[[case]]` tables with `inputs`
+      and `expect`; case inputs are validated against the task's declared
+      inputs before any adapter call
+- [x] Schema validation of model output against declared contracts: real
+      pydantic models are built from the spec's own schemas (`Field` bounds,
+      closed enums, optionality, nested/list schemas, `extra="forbid"`)
+- [x] Assertion language kept declarative: bare value = equality, plus a
+      closed operator set `in`/`not_in`/`gte`/`lte`/`contains`, dotted paths
+      for nested fields — anything richer belongs in the spec
+- [x] Runner with per-case pass/fail report and `--json`; adapter errors and
+      schema violations are case failures, not crashes
+- [x] Provider-independent model adapter boundary: an adapter is any
+      `Callable[[prompt], reply]`; the core ships only a subprocess bridge
+      (`--adapter-cmd 'claude -p'` or any stdin→stdout command)
+- [x] At least one eval for the BookBank routine's `SelectIssue` task —
+      `docs/evals/SelectIssue.eval.toml` (3 cases); a repo test runs it with
+      a canned conservative reply to prove the artifact stays well-formed
 
 ## Phase 7 — `aspec run` / `orchestrate` (guarded execution)
 
@@ -215,6 +223,16 @@ questions the spec must answer). Semantic ambiguities discovered while
 building the toolchain are spec bugs — fix the spec, then the tool.
 
 - 2026-08-01 — Plan created.
+- 2026-08-01 — Phase 6 complete (`aspec eval`). Format choices: TOML over
+  YAML (stdlib, no new dependency) and over Python (eval files must stay
+  data). The assertion operators are a deliberately closed set — richer
+  logic is a sign the expectation belongs in the spec's rules, not the eval.
+  The SelectIssue eval pins only judgment-reachable fields (freeform-context
+  parsing); fields needing live `gh` queries stay unpinned, so a
+  conservative on_uncertain reply legitimately passes the first two cases —
+  doubt de-escalating is correct behavior, and the repo test asserts exactly
+  that pattern. Real runs need an agent-capable adapter
+  (`--adapter-cmd 'claude -p'`).
 - 2026-08-01 — Phase 5 complete (`aspec fmt`). Design choices: (1) `ruff`
   moved from dev to runtime dependencies — it is the layout engine, invoked
   as `python -m ruff format --isolated` so canonical layout ignores any

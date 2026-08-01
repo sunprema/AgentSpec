@@ -25,6 +25,15 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
     for name, help_text in SUBCOMMANDS.items():
         sub = subparsers.add_parser(name, help=help_text)
+        if name == "eval":
+            sub.add_argument("eval_file", nargs="+", help="path to an .eval.toml file")
+            sub.add_argument(
+                "--adapter-cmd",
+                help="shell command that reads a prompt on stdin and prints "
+                "the model reply, e.g. 'claude -p'",
+            )
+            sub.add_argument("--json", action="store_true", help="emit results as JSON")
+            continue
         sub.add_argument("spec", nargs="+", help="path to a .aspec.py file")
         if name == "lint":
             sub.add_argument("--json", action="store_true", help="emit diagnostics as JSON")
@@ -57,6 +66,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_graph(args)
     if args.command == "fmt":
         return cmd_fmt(args)
+    if args.command == "eval":
+        return cmd_eval(args)
     print(f"aspec {args.command}: not implemented yet", file=sys.stderr)
     return 2
 
@@ -185,6 +196,33 @@ def cmd_fmt(args: argparse.Namespace) -> int:
         return 0
     print(f"{len(changed)} of {total} file(s) {'need formatting' if args.check else 'reformatted'}")
     return 1 if args.check else 0
+
+
+def cmd_eval(args: argparse.Namespace) -> int:
+    import shlex
+
+    from agentspec.eval import EvalError, render_report, run_eval, subprocess_adapter
+
+    if not args.adapter_cmd:
+        print(
+            "aspec eval: an adapter is required — e.g. --adapter-cmd 'claude -p' "
+            "(any command that reads a prompt on stdin and prints the reply)",
+            file=sys.stderr,
+        )
+        return 2
+    adapter = subprocess_adapter(shlex.split(args.adapter_cmd))
+    reports = []
+    for eval_file in args.eval_file:
+        try:
+            reports.append(run_eval(eval_file, adapter))
+        except (OSError, EvalError) as exc:
+            print(f"aspec eval: {exc}", file=sys.stderr)
+            return 1
+    if args.json:
+        print(json.dumps([r.model_dump() for r in reports], indent=2))
+    else:
+        print("\n\n".join(render_report(r) for r in reports))
+    return 0 if all(r.passed for r in reports) else 1
 
 
 if __name__ == "__main__":

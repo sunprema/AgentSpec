@@ -6,7 +6,7 @@ import pytest
 from agentspec import __version__
 from agentspec.cli import SUBCOMMANDS, main
 
-STUB_COMMANDS = [c for c in SUBCOMMANDS if c not in ("lint", "plan", "graph", "fmt")]
+STUB_COMMANDS = [c for c in SUBCOMMANDS if c not in ("lint", "plan", "graph", "fmt", "eval")]
 
 
 def test_version(capsys):
@@ -179,3 +179,55 @@ def test_fmt_refuses_broken_syntax(capsys, tmp_path):
     spec.write_text("def broken(:\n")
     assert main(["fmt", str(spec)]) == 1
     assert "syntax error" in capsys.readouterr().err
+
+
+def _write_eval_setup(tmp_path, fixtures_dir, reply):
+    adapter = tmp_path / "adapter.py"
+    adapter.write_text(f"import sys\nsys.stdin.read()\nprint({reply!r})\n")
+    eval_file = tmp_path / "triage.eval.toml"
+    eval_file.write_text(
+        f'spec = "{fixtures_dir / "minimal_good.aspec.py"}"\n'
+        'task = "TriageMessage"\n\n'
+        "[[case]]\n"
+        'name = "noise stays unfiled"\n'
+        "[case.inputs]\n"
+        'message_text = "just small talk"\n'
+        "[case.expect]\n"
+        "actionable = false\n"
+    )
+    return eval_file, adapter
+
+
+def test_eval_requires_an_adapter(capsys, tmp_path, fixtures_dir):
+    eval_file, _ = _write_eval_setup(tmp_path, fixtures_dir, "{}")
+    assert main(["eval", str(eval_file)]) == 2
+    assert "--adapter-cmd" in capsys.readouterr().err
+
+
+def test_eval_pass_and_fail_exit_codes(capsys, tmp_path, fixtures_dir):
+    import sys as _sys
+
+    good = '{"actionable": false, "category": "noise", "summary": "ok"}'
+    eval_file, adapter = _write_eval_setup(tmp_path, fixtures_dir, good)
+    cmd = f"{_sys.executable} {adapter}"
+    assert main(["eval", "--adapter-cmd", cmd, str(eval_file)]) == 0
+    out = capsys.readouterr().out
+    assert "PASS noise stays unfiled" in out
+    assert "1 case(s): 1 passed, 0 failed" in out
+
+    bad = '{"actionable": true, "category": "bug", "summary": "file it"}'
+    eval_file, adapter = _write_eval_setup(tmp_path, fixtures_dir, bad)
+    assert main(["eval", "--adapter-cmd", f"{_sys.executable} {adapter}", str(eval_file)]) == 1
+    assert "FAIL" in capsys.readouterr().out
+
+
+def test_eval_json_output(capsys, tmp_path, fixtures_dir):
+    import sys as _sys
+
+    good = '{"actionable": false, "category": "noise", "summary": "ok"}'
+    eval_file, adapter = _write_eval_setup(tmp_path, fixtures_dir, good)
+    cmd = f"{_sys.executable} {adapter}"
+    assert main(["eval", "--json", "--adapter-cmd", cmd, str(eval_file)]) == 0
+    (report,) = json.loads(capsys.readouterr().out)
+    assert report["task"] == "TriageMessage"
+    assert report["results"][0]["passed"] is True
