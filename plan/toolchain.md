@@ -162,11 +162,13 @@ Derive execution order purely from the data-flow binds.
 
 ## Phase 5 — `aspec fmt` (formatter)
 
-- [ ] Canonical formatting for spec files (deterministic ordering of reserved
-      attributes, rule-tuple layout, line wrapping) built on `ruff format` plus
-      spec-specific ordering rules
-- [ ] `--check` mode for CI
-- [ ] Idempotence test: `fmt(fmt(x)) == fmt(x)` over all fixtures
+- [x] Canonical formatting for spec files: task bodies reorder to docstring →
+      inputs → `returns` → pipeline binds (relative order preserved — it is
+      semantic) → reserved attributes in spec §4 order; comments travel with
+      the statement that follows them; layout by `ruff format --isolated`
+      (now a runtime dependency), so output is independent of project config
+- [x] `--check` mode for CI (exit 1 when files would change, nothing written)
+- [x] Idempotence test: `fmt(fmt(x)) == fmt(x)` over all fixtures
 
 ## Phase 6 — `aspec eval` (fixture-based behavioral tests)
 
@@ -213,6 +215,16 @@ questions the spec must answer). Semantic ambiguities discovered while
 building the toolchain are spec bugs — fix the spec, then the tool.
 
 - 2026-08-01 — Plan created.
+- 2026-08-01 — Phase 5 complete (`aspec fmt`). Design choices: (1) `ruff`
+  moved from dev to runtime dependencies — it is the layout engine, invoked
+  as `python -m ruff format --isolated` so canonical layout ignores any
+  project ruff config. (2) Statement reordering is done by slicing source
+  line ranges from the AST (comments/blanks attach to the statement that
+  follows), avoiding a libcst dependency; bodies with two statements on one
+  line are left untouched rather than risked. (3) Module level is never
+  reordered — constants and class order are semantic
+  (definition-before-reference). Fixtures on disk stay unformatted on
+  purpose; idempotence is asserted in memory.
 - 2026-08-01 — Phase 4 complete (`aspec graph`). The failure layer trades
   completeness for readability: only `abort` gets real edges (into one shared
   unwind node, since the saga unwind is the safety path worth seeing);

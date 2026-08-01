@@ -34,6 +34,12 @@ def build_parser() -> argparse.ArgumentParser:
         elif name == "graph":
             sub.add_argument("--failures", action="store_true", help="include the failure layer")
             sub.add_argument("--out", help="write the markdown to this file")
+        elif name == "fmt":
+            sub.add_argument(
+                "--check",
+                action="store_true",
+                help="report files that would change, without writing (CI)",
+            )
     return parser
 
 
@@ -49,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_plan(args)
     if args.command == "graph":
         return cmd_graph(args)
+    if args.command == "fmt":
+        return cmd_fmt(args)
     print(f"aspec {args.command}: not implemented yet", file=sys.stderr)
     return 2
 
@@ -147,6 +155,36 @@ def cmd_graph(args: argparse.Namespace) -> int:
     else:
         print(output, end="")
     return 0
+
+
+def cmd_fmt(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from agentspec.fmt import FormatError, format_source
+
+    changed = []
+    for spec in args.spec:
+        path = Path(spec)
+        try:
+            source = path.read_text()
+            formatted = format_source(source, spec)
+        except (OSError, FormatError) as exc:
+            print(f"aspec fmt: {exc}", file=sys.stderr)
+            return 1
+        if formatted == source:
+            continue
+        changed.append(spec)
+        if args.check:
+            print(f"would reformat {spec}")
+        else:
+            path.write_text(formatted)
+            print(f"reformatted {spec}")
+    total = len(args.spec)
+    if not changed:
+        print(f"{total} file(s) already formatted")
+        return 0
+    print(f"{len(changed)} of {total} file(s) {'need formatting' if args.check else 'reformatted'}")
+    return 1 if args.check else 0
 
 
 if __name__ == "__main__":

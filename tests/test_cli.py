@@ -6,7 +6,7 @@ import pytest
 from agentspec import __version__
 from agentspec.cli import SUBCOMMANDS, main
 
-STUB_COMMANDS = [c for c in SUBCOMMANDS if c not in ("lint", "plan", "graph")]
+STUB_COMMANDS = [c for c in SUBCOMMANDS if c not in ("lint", "plan", "graph", "fmt")]
 
 
 def test_version(capsys):
@@ -141,3 +141,41 @@ def test_graph_out_file(capsys, tmp_path, fixtures_dir):
 def test_graph_refuses_broken_spec(capsys, fixtures_dir):
     assert main(["graph", str(fixtures_dir / "bad_module_statement.aspec.py")]) == 1
     assert "parse errors" in capsys.readouterr().err
+
+
+UNFORMATTED_SPEC = (
+    '"""D."""\n'
+    "from pydantic import BaseModel\n"
+    "from agentspec import Task\n\n"
+    "class Out(BaseModel):\n"
+    "    ok:bool\n\n"
+    "class T(Task):\n"
+    '    """Do."""\n'
+    "    on_failure = 'abort'\n"
+    "    returns: Out\n"
+)
+
+
+def test_fmt_check_then_write(capsys, tmp_path):
+    spec = tmp_path / "spec.aspec.py"
+    spec.write_text(UNFORMATTED_SPEC)
+
+    assert main(["fmt", "--check", str(spec)]) == 1
+    assert "would reformat" in capsys.readouterr().out
+    assert spec.read_text() == UNFORMATTED_SPEC  # --check never writes
+
+    assert main(["fmt", str(spec)]) == 0
+    assert "reformatted" in capsys.readouterr().out
+    content = spec.read_text()
+    assert "ok: bool" in content
+    assert content.index("returns: Out") < content.index('on_failure = "abort"')
+
+    assert main(["fmt", "--check", str(spec)]) == 0
+    assert "already formatted" in capsys.readouterr().out
+
+
+def test_fmt_refuses_broken_syntax(capsys, tmp_path):
+    spec = tmp_path / "broken.aspec.py"
+    spec.write_text("def broken(:\n")
+    assert main(["fmt", str(spec)]) == 1
+    assert "syntax error" in capsys.readouterr().err
