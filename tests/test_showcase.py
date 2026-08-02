@@ -137,3 +137,66 @@ def test_oncall_export_is_committed_and_current():
     html = (SHOWCASE / "oncall-triage" / "oncall-triage.html").read_text()
     assert "window.EMBEDDED_SPEC" in html
     assert '"root": "OncallRun"' in html
+
+
+# ---------------- cost-janitor ----------------
+
+
+@pytest.fixture(scope="module")
+def janitor():
+    return parse_file(SHOWCASE / "cost-janitor" / "cost-janitor.aspec.py")
+
+
+def test_janitor_lints_clean_strict(janitor):
+    assert lint_module(janitor) == []
+
+
+def test_janitor_is_fmt_canonical():
+    from agentspec.fmt import format_source
+
+    path = SHOWCASE / "cost-janitor" / "cost-janitor.aspec.py"
+    source = path.read_text()
+    assert format_source(source, str(path)) == source
+
+
+def test_janitor_safety_shape(janitor):
+    plan = build_plan(janitor, janitor.tasks["JanitorRun"])
+    reaps = plan.step("reaps")
+    assert reaps.serialized  # exclusive cloud tool: one delete at a time
+    assert "r.kind in" in reaps.filter  # the cage is the license
+    # the report fires on every terminal path
+    assert all("report" not in skips for skips in plan.gate_skips.values())
+    # blast radius is a schema bound
+    selected = janitor.schemas["ReapPlan"].field("selected")
+    assert selected.max_length == 5
+    # doubt keeps: the uncertain fallback proceeds with nothing
+    assert janitor.tasks["SelectReaps"].on_uncertain["proceed"] is False
+    assert janitor.tasks["ReapResource"].on_item_failure == "skip_and_report"
+    assert janitor.tasks["ReapResource"].undo
+
+
+def test_janitor_risky_diff_story(janitor):
+    risky = parse_file(SHOWCASE / "cost-janitor" / "cost-janitor-risky.aspec.py")
+    changes = diff_modules(janitor, risky)
+    widening = {c.code for c in changes if c.direction == "widens"}
+    assert widening == {
+        "filter-removed",
+        "bound-loosened",
+        "rule-removed",
+        "undo-removed",
+        "rule-weakened",
+    }
+    assert any(d.code == "AS034" for d in lint_module(risky))
+
+
+def test_janitor_eval_artifact_is_well_formed():
+    reply = '{"proceed": false, "selected": [], "deferred": 0, "rationale": "canned conservative"}'
+    report = run_eval(SHOWCASE / "cost-janitor" / "SelectReaps.eval.toml", lambda prompt: reply)
+    assert len(report.results) == 3
+    assert report.results[2].passed  # all-protected week -> proceed false
+
+
+def test_janitor_export_is_committed_and_current():
+    html = (SHOWCASE / "cost-janitor" / "cost-janitor.html").read_text()
+    assert "window.EMBEDDED_SPEC" in html
+    assert '"root": "JanitorRun"' in html

@@ -1,0 +1,43 @@
+# Pins the janitor's judgment: what may go, what must stay.
+# Run: aspec eval SelectReaps.eval.toml --adapter-cmd 'claude -p'
+
+spec = "cost-janitor.aspec.py"
+task = "SelectReaps"
+
+[[case]]
+name = "keep-tagged and young resources are never selected"
+[case.inputs]
+resources = [
+  { id = "vol-a", kind = "unattached-volume", age_days = 200, monthly_usd = 40, tags = ["keep"] },
+  { id = "vol-b", kind = "unattached-volume", age_days = 12, monthly_usd = 90, tags = [] },
+  { id = "vol-c", kind = "unattached-volume", age_days = 120, monthly_usd = 15, tags = [] },
+]
+[case.expect]
+proceed = true
+"selected.0.id" = "vol-c"
+
+[[case]]
+name = "more than five eligible: cap holds, the rest defer"
+[case.inputs]
+resources = [
+  { id = "v1", kind = "orphan-snapshot", age_days = 90, monthly_usd = 5, tags = [] },
+  { id = "v2", kind = "orphan-snapshot", age_days = 91, monthly_usd = 5, tags = [] },
+  { id = "v3", kind = "orphan-snapshot", age_days = 92, monthly_usd = 5, tags = [] },
+  { id = "v4", kind = "orphan-snapshot", age_days = 93, monthly_usd = 5, tags = [] },
+  { id = "v5", kind = "orphan-snapshot", age_days = 94, monthly_usd = 5, tags = [] },
+  { id = "v6", kind = "orphan-snapshot", age_days = 95, monthly_usd = 5, tags = [] },
+  { id = "v7", kind = "orphan-snapshot", age_days = 96, monthly_usd = 5, tags = [] },
+]
+[case.expect]
+proceed = true
+deferred = { gte = 2 }
+
+[[case]]
+name = "everything protected: a clean, empty week"
+[case.inputs]
+resources = [
+  { id = "vol-p", kind = "unattached-volume", age_days = 300, monthly_usd = 200, tags = ["prod"] },
+  { id = "vol-k", kind = "detached-ip", age_days = 400, monthly_usd = 4, tags = ["keep"] },
+]
+[case.expect]
+proceed = false

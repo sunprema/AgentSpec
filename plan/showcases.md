@@ -31,9 +31,12 @@ Packaging per showcase (`showcase/<name>/`):
       Language additions earned while building it: gates on derivation
       boolean fields (AS011 extended); the diff demo surfaced that
       weakening shared doctrine reports on every bound task.
-- [ ] **cost-janitor** — the deleter nobody trusts. Aha: reversibility
-      and blast-radius bounds are statically visible (undo,
-      snapshot-first ordering, caged allowlist, abort-unwind).
+- [x] **cost-janitor** (2026-08-02) — the deleter nobody trusts. Aha
+      delivered: the cage-is-the-license filter, the cap as a schema
+      bound, snapshot-verify-delete ordering keeping undo honest, and a
+      risky variant that widens in five distinct kinds on one screen.
+      Contrast with oncall-triage is deliberate: doubt keeps here, doubt
+      escalates there — the domain defines conservative.
 - [ ] Stretch: **release-notes** (drafting power ≠ publishing power),
       **pr-shepherd** (lintable review policy), **metrics-sentinel**
       (fan-out + on_item_failure resilience).
