@@ -34,6 +34,26 @@ All analysis is static: specs are parsed as AST and never imported or
 executed. Implementation status is tracked in [plan/toolchain.md](plan/toolchain.md);
 further visual tooling ideas in [plan/visual-tooling.md](plan/visual-tooling.md).
 
+## Dev mode → production
+
+A routine's semantics **are** its unattended semantics — production never
+asks. During development, `aspec run --dev` lets the routine ask *you*
+instead of guessing: at declared doubt points (`on_uncertain` or an
+`Escalate` path — nowhere else) it may pose one clarifying question per
+step. Declining applies the declared fallback verbatim; answers never
+override must-rules or widen tools. Every question is recorded and the
+run ends with a gap report:
+
+```
+dev mode: 2 clarification(s) — each is a spec gap; consider a rule (with a why and a since=):
+  1. [SelectUpdate] Q: should majors count against the nightly cap?
+     A: yes — a major consumes the whole night
+```
+
+The loop: develop with `--dev`, graduate each question into a `Rule(...)`
+with a `why` and a `since=`, and deploy unattended when the questions
+stop — *"no clarifications were needed"* is the readiness signal.
+
 ## Studio
 
 `aspec studio` opens the spec as a live workbench: the pipeline laid out by
