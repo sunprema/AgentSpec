@@ -171,3 +171,39 @@ class R(Task):
     )
     (plan,) = build_plans(module)
     assert plan.gate_skips == {"work": []}
+
+
+def test_complementary_gates_are_not_false_concurrency():
+    """`cond` vs `not cond` steps sharing an exclusive tool can never race."""
+    from agentspec.parser import parse_source
+    from agentspec.plan import build_plan
+
+    src = '''"""D."""
+from pydantic import BaseModel
+from agentspec import Task, Tool
+
+class Out(BaseModel):
+    ok: bool
+
+class A(Task):
+    """A."""
+    returns: Out
+    tools = [Tool("git", ops=["push"], exclusive=True)]
+    on_failure = "abort"
+
+class B(Task):
+    """B."""
+    returns: Out
+    tools = [Tool("git", ops=["branch -D"], exclusive=True)]
+    on_failure = "abort"
+
+class R(Task):
+    """R."""
+    returns: Out
+    first = A()
+    yes = A() if first.ok else None
+    no = B() if not first.ok else None
+'''
+    module = parse_source(src)
+    plan = build_plan(module, module.tasks["R"])
+    assert plan.warnings == []

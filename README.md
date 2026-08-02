@@ -59,6 +59,16 @@ as one self-contained HTML file with `--export`:
 
 ![A run trace overlaid on the canvas](docs/images/studio-trace.png)
 
+## Showcase
+
+[`showcase/depbot`](showcase/depbot) — the nightly dependency bot that can
+never merge. Its 60-second Aha: a "helpful" variant adds `pr merge` to the
+tool surface and weakens one must-rule, and `aspec diff` lights up
+`[widens]` on exactly those lines — a bot's permissions as a reviewable,
+CI-gateable artifact. Ships with the spec, the risky variant, an eval
+pinning its one judgment call, and a self-contained studio export
+(`depbot.html`) with the gate simulator working offline.
+
 ## Claude plugin
 
 This repository is also a Claude Code plugin that teaches Claude to author,

@@ -117,7 +117,9 @@ def _gate_skips(module: SpecModule, task: TaskDef) -> dict[str, list[str]]:
 
 def _false_concurrency(steps: list[StepPlan], waves: list[list[str]]) -> list[str]:
     """Two steps in the same wave holding the same exclusive tool would race
-    on the resource — sequencing that matters must appear as a bind."""
+    on the resource — sequencing that matters must appear as a bind. Steps
+    with complementary gates (`cond` vs `not cond`) can never run together
+    and are not a race."""
     by_var = {s.var: s for s in steps}
     warnings = []
     for index, wave in enumerate(waves):
@@ -126,9 +128,21 @@ def _false_concurrency(steps: list[StepPlan], waves: list[list[str]]) -> list[st
             for tool in by_var[var].exclusive_tools:
                 holders.setdefault(tool, []).append(var)
         for tool, vars_ in holders.items():
-            if len(vars_) > 1:
+            racing = [
+                (a, b)
+                for i, a in enumerate(vars_)
+                for b in vars_[i + 1 :]
+                if not _mutually_exclusive(by_var[a].gate, by_var[b].gate)
+            ]
+            if racing:
                 warnings.append(
                     f"steps {', '.join(vars_)} run concurrently in wave {index} "
                     f"but each holds exclusive tool '{tool}' — missing bind?"
                 )
     return warnings
+
+
+def _mutually_exclusive(gate_a: str | None, gate_b: str | None) -> bool:
+    if gate_a is None or gate_b is None:
+        return False
+    return gate_a == f"not {gate_b}" or gate_b == f"not {gate_a}"
