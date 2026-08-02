@@ -1,0 +1,27 @@
+{
+  "name": "aspec-lsp",
+  "displayName": "AgentSpec",
+  "description": "Diagnostics, hover, navigation, and completions for AgentSpec (.aspec.py) files via aspec lsp",
+  "version": "0.1.0",
+  "publisher": "agentspec",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Programming Languages", "Linters"],
+  "activationEvents": ["workspaceContains:**/*.aspec.py"],
+  "main": "./extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "AgentSpec",
+      "properties": {
+        "aspec.serverCommand": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["uv", "run", "aspec", "lsp"],
+          "description": "Command that starts the AgentSpec language server (stdio). Use an absolute aspec path if the workspace has no uv project."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}
