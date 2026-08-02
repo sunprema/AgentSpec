@@ -66,3 +66,74 @@ def test_export_is_committed_and_current():
     html = (SHOWCASE / "depbot" / "depbot.html").read_text()
     assert "window.EMBEDDED_SPEC" in html
     assert '"root": "DepbotRun"' in html
+
+
+# ---------------- oncall-triage ----------------
+
+
+@pytest.fixture(scope="module")
+def oncall():
+    return parse_file(SHOWCASE / "oncall-triage" / "oncall-triage.aspec.py")
+
+
+def test_oncall_lints_clean_strict(oncall):
+    assert lint_module(oncall) == []
+
+
+def test_oncall_is_fmt_canonical():
+    from agentspec.fmt import format_source
+
+    path = SHOWCASE / "oncall-triage" / "oncall-triage.aspec.py"
+    source = path.read_text()
+    assert format_source(source, str(path)) == source
+
+
+def test_oncall_blindness_still_pages(oncall):
+    """The showcase's core safety property: a failed hypothesis or missing
+    diagnostics can never silence the pager on an actionable alert."""
+    plan = build_plan(oncall, oncall.tasks["OncallRun"])
+    assert plan.step("page").gate == "triage.page"  # gated on the derived value
+    # hypo's false gate must skip nothing but itself — page and ticket
+    # tolerate a missing statement (str | None)
+    assert plan.gate_skips["hypo"] == []
+    # the triage derivation floors severity at sev2 when diagnostics failed
+    triage = oncall.tasks["OncallRun"].derivation("triage")
+    blind_row = next(r for r in triage.rows if r.raw == "not diag.collected")
+    assert blind_row.output["severity"].value == "sev2"
+    assert blind_row.output["page"].value is True
+
+
+def test_oncall_escalation_is_declared(oncall):
+    policy = oncall.tasks["PageOncall"].on_failure
+    assert policy.kind == "escalate"
+    assert policy.channel == "secondary-oncall"
+    assert policy.timeout_s == 600
+    assert policy.then.kind == "literal"
+
+
+def test_oncall_risky_diff_story(oncall):
+    risky = parse_file(SHOWCASE / "oncall-triage" / "oncall-triage-risky.aspec.py")
+    changes = diff_modules(oncall, risky)
+    widening = [c for c in changes if c.direction == "widens"]
+    assert len(widening) == 7
+    surface = next(c for c in widening if c.code == "tool-surface-widened")
+    assert "delete pod" in surface.detail
+    # the weakened shared doctrine reports on every task it binds
+    weakened_owners = {c.owner for c in widening if c.code == "rule-weakened"}
+    assert len(weakened_owners) == 6
+
+
+def test_oncall_eval_artifact_is_well_formed():
+    reply = (
+        '{"parsed": true, "actionable": true, "service": "checkout",'
+        ' "env": "prod", "customer_facing": true, "summary": "canned"}'
+    )
+    report = run_eval(SHOWCASE / "oncall-triage" / "ParseAlert.eval.toml", lambda prompt: reply)
+    assert len(report.results) == 3
+    assert report.results[1].passed  # the injection case expects actionable=true
+
+
+def test_oncall_export_is_committed_and_current():
+    html = (SHOWCASE / "oncall-triage" / "oncall-triage.html").read_text()
+    assert "window.EMBEDDED_SPEC" in html
+    assert '"root": "OncallRun"' in html

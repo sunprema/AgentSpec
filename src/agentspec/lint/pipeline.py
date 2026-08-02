@@ -69,6 +69,31 @@ def _check_bind(
         yield from _check_kwargs(module, scope, index, bind, target)
 
 
+def _check_derived_gate(scope: Scope, bind: PipelineBind, path: AttrPath) -> Iterator[Diagnostic]:
+    """A gate may reference a derivation field when every row yields a
+    boolean literal for it — a derived go/no-go is deterministic."""
+    derivation = scope.derivations[path.root]
+    if len(path.parts) != 2:
+        yield mk(
+            "AS011",
+            f"gate on '{bind.var}' must be a single field of derivation "
+            f"'{path.root}', got '{path.dotted}'",
+            bind.gate.loc if bind.gate else bind.loc,
+        )
+        return
+    field = path.parts[1]
+    values = [row.output.get(field) for row in derivation.rows]
+    if any(v is None for v in values) or not all(
+        v is not None and v.path is None and isinstance(v.value, bool) for v in values
+    ):
+        yield mk(
+            "AS011",
+            f"gate on '{bind.var}': derivation field '{path.dotted}' must be "
+            "a boolean literal in every row",
+            bind.gate.loc if bind.gate else bind.loc,
+        )
+
+
 def _check_gate(scope: Scope, index: int, bind: PipelineBind) -> Iterator[Diagnostic]:
     gate = bind.gate
     assert gate is not None
@@ -79,6 +104,9 @@ def _check_gate(scope: Scope, index: int, bind: PipelineBind) -> Iterator[Diagno
             f"step, got '{gate.raw}'",
             gate.loc,
         )
+        return
+    if gate.path.root in scope.derivations:
+        yield from _check_derived_gate(scope, bind, gate.path)
         return
     if not scope.is_prior_bind(gate.path.root, index):
         yield mk(

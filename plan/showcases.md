@@ -24,9 +24,13 @@ Packaging per showcase (`showcase/<name>/`):
       weakened, undo dropped), pinned by tests/test_showcase.py. Bonus
       finding while building it: complementary gates (`cond` / `not cond`)
       no longer false-positive the plan's exclusive-tool race warning.
-- [ ] **oncall-triage** — incident first responder. Aha: doubt and
-      escalation are declared (`Escalate` with timeout), severity routing
-      is a derivation, verified-vs-inferred is a must-rule.
+- [x] **oncall-triage** (2026-08-02) — incident first responder. Aha
+      delivered: mechanical severity routing with doubt-raises-severity
+      (blindness pages sev2, proven by plan + simulator), declared
+      Escalate chain, and an eval pinning prompt-injection resistance.
+      Language additions earned while building it: gates on derivation
+      boolean fields (AS011 extended); the diff demo surfaced that
+      weakening shared doctrine reports on every bound task.
 - [ ] **cost-janitor** — the deleter nobody trusts. Aha: reversibility
       and blast-radius bounds are statically visible (undo,
       snapshot-first ordering, caged allowlist, abort-unwind).
