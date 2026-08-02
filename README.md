@@ -59,6 +59,24 @@ as one self-contained HTML file with `--export`:
 
 ![A run trace overlaid on the canvas](docs/images/studio-trace.png)
 
+## Claude plugin
+
+This repository is also a Claude Code plugin that teaches Claude to author,
+review, and run AgentSpec routines with the toolchain above:
+
+```sh
+claude plugin marketplace add sunprema/AgentSpec
+claude plugin install agentspec@agentspec
+```
+
+Three skills ship with it — `write-agentspec` (the authoring loop:
+scaffold → schemas → tasks → pipeline → lint/plan/fmt, plus the semantics
+lint can't teach), `review-agentspec` (lint triage and `aspec diff` with
+capability-widening review), and `run-agentspec` (guarded execution, eval
+authoring, trace replay). The skills invoke the toolchain from the plugin's
+own checkout (`uv run --project "$CLAUDE_PLUGIN_ROOT" aspec …`), and the
+full language reference in `docs/` travels with them.
+
 ## Development
 
 ```sh

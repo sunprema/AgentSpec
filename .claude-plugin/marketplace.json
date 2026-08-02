@@ -1,0 +1,13 @@
+{
+  "name": "agentspec",
+  "owner": {
+    "name": "sunprema"
+  },
+  "plugins": [
+    {
+      "name": "agentspec",
+      "source": ".",
+      "description": "Author, review, and run AgentSpec routines (.aspec.py) with the aspec static toolchain."
+    }
+  ]
+}

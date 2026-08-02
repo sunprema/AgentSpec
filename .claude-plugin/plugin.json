@@ -1,0 +1,9 @@
+{
+  "name": "agentspec",
+  "description": "Author, review, and run AgentSpec routines (.aspec.py) — the declarative specification language for autonomous AI agents — with its static toolchain: lint, plan, graph, diff, fmt, eval, run, studio, lsp.",
+  "version": "0.1.0",
+  "author": {
+    "name": "sunprema"
+  },
+  "homepage": "https://github.com/sunprema/AgentSpec"
+}
