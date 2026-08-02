@@ -9,13 +9,12 @@ import json
 
 import pytest
 
+from agentspec.eval import build_output_model
+from agentspec.eval.runner import render_prompt
+from agentspec.parser import parse_source
 from agentspec.run import orchestrate, run_routine
 from agentspec.run.guard import guarded_call
 from agentspec.run.single import has_declared_doubt
-from agentspec.parser import parse_source
-from agentspec.eval import build_output_model
-from agentspec.eval.runner import render_prompt
-
 
 SPEC = '''"""Dev-mode fixture."""
 from pydantic import BaseModel
