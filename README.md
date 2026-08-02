@@ -33,6 +33,32 @@ All analysis is static: specs are parsed as AST and never imported or
 executed. Implementation status is tracked in [plan/toolchain.md](plan/toolchain.md);
 further visual tooling ideas in [plan/visual-tooling.md](plan/visual-tooling.md).
 
+## Studio
+
+`aspec studio` opens the spec as a live workbench: the pipeline laid out by
+execution wave, a full inspector (contracts, rules, tools, failure
+declarations), lint findings as node badges, and a gate simulator — all
+derived from the parsed SpecModel, re-parsed on every save.
+
+The routing decision is a declared derivation (spec 2.2), shown as a
+decision table:
+
+![The route derivation and its decision table](docs/images/studio-routing.png)
+
+Flip a gate in the simulator and watch spec §7 semantics play out — here
+`plugin.usable` is false, five steps skip, but `route` and `alert` still
+run (skips never propagate through a derivation or an `X | None` input),
+which is exactly why the operator alert fires on every terminal path:
+
+![Simulator: a false gate skips five steps; the alert still runs](docs/images/studio-simulator.png)
+
+Overlay a real run with `--trace result.json` (green ok, amber declared
+fallback, dimmed skipped), pin steps with notes for an agent to read over
+the built-in MCP endpoint, or export the whole view — simulator included —
+as one self-contained HTML file with `--export`:
+
+![A run trace overlaid on the canvas](docs/images/studio-trace.png)
+
 ## Development
 
 ```sh
