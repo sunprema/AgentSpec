@@ -55,6 +55,7 @@ class Scope:
         self.task = task
         self.inputs = {i.name: i.type for i in task.inputs}
         self.bind_index = {b.var: i for i, b in enumerate(task.pipeline)}
+        self.derivations = {d.var: d for d in task.derivations}
 
     def is_prior_bind(self, name: str, at: int) -> bool:
         return name in self.bind_index and self.bind_index[name] < at
@@ -73,6 +74,17 @@ class Scope:
             return Resolved(TypeExpr(kind="name", name="str"))
         if root in self.inputs:
             return self._walk(self.inputs[root], rest, listy=False)
+        if root in self.derivations:
+            derivation = self.derivations[root]
+            fields = {field for row in derivation.rows for field in row.output}
+            if rest and rest[0] not in fields:
+                raise NoSuchField(
+                    f"derivation '{root}' has no field '{rest[0]}' "
+                    f"(fields: {', '.join(sorted(fields))})"
+                )
+            # field types are inferred from row literals downstream; the
+            # walk stops here with an open type
+            return Resolved(None, False)
         if root in self.bind_index:
             index = self.bind_index[root]
             if index >= at:

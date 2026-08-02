@@ -114,17 +114,17 @@ def render_prompt(
         task.docstring or "",
     ]
     # A parent task's constraints bind every step inside it (spec §5); shared
-    # rule lists appear in both, so dedupe by text.
+    # rule lists appear in both, so dedupe by rule id.
     rules, seen = [], set()
     for rule in list(extra_rules or []) + list(task.constraints):
-        if rule.text not in seen:
-            seen.add(rule.text)
+        if rule.id not in seen:
+            seen.add(rule.id)
             rules.append(rule)
     if rules:
         lines += ["", "# Rules"]
         for rule in rules:
             why = f" — why: {rule.why}" if rule.why else ""
-            lines.append(f"- ({rule.severity}) {rule.text}{why}")
+            lines.append(f"- ({rule.severity}) [{rule.id}] {rule.text}{why}")
     if task.on_uncertain is not None:
         lines += [
             "",

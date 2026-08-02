@@ -2,12 +2,14 @@
 
 from agentspec.diagnostics import Diagnostic
 from agentspec.lint.catalog import CATALOG
+from agentspec.lint.derivations import check_derivations
 from agentspec.lint.hygiene import check_hygiene
 from agentspec.lint.pipeline import check_pipelines
+from agentspec.lint.reduction import check_reduction
 from agentspec.lint.structure import check_structure
 from agentspec.parser import SpecModule
 
-PASSES = [check_structure, check_pipelines, check_hygiene]
+PASSES = [check_structure, check_pipelines, check_hygiene, check_reduction, check_derivations]
 
 __all__ = ["CATALOG", "dedupe", "lint_module"]
 

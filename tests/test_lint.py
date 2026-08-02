@@ -5,7 +5,7 @@ from agentspec.parser import parse_source
 
 HEADER = '''"""Doc."""
 from pydantic import BaseModel
-from agentspec import Task, Tool, Enum, Retry, Escalate
+from agentspec import Task, Tool, Rule, Enum, Retry, Escalate
 
 class Out(BaseModel):
     ok: bool
@@ -253,20 +253,143 @@ def test_as030_must_rule_without_why():
     diags = lint('''class T(Task):
     """D."""
     returns: Out
-    constraints = ["Be careful"]
+    constraints = [Rule("be-careful", "Be careful")]
 ''')
     assert codes(diags) == {"AS030"}
-    assert "Be careful" in diags[0].message
+    assert "be-careful" in diags[0].message
 
 
 def test_as031_constraint_ceiling():
-    rules = ", ".join(f'("rule {i}", "why {i}")' for i in range(16))
+    rules = ", ".join(f'Rule("rule-{i}", "rule {i}", why="why {i}")' for i in range(16))
     diags = lint(f'''class T(Task):
     """D."""
     returns: Out
     constraints = [{rules}]
 ''')
     assert codes(diags) == {"AS031"}
+
+
+def test_as038_fallback_literal_violations():
+    # wrong field name + missing required field
+    diags = lint("""class T(Task):
+    \"\"\"D.\"\"\"
+    returns: Out
+    on_uncertain = {"okk": False, "label": "x", "n": 0}
+""")
+    assert codes(diags) == {"AS038"}
+    assert "on_uncertain of 'T'" in diags[0].message
+
+    # bound violation and wrong type
+    diags = lint("""class T(Task):
+    \"\"\"D.\"\"\"
+    returns: Out
+    on_failure = {"ok": "yes", "label": "x", "n": -1}
+""")
+    assert codes(diags) == {"AS038"}
+
+    # a literal buried in a Retry then-chain
+    diags = lint("""class T(Task):
+    \"\"\"D.\"\"\"
+    returns: Out
+    on_failure = Retry(max=2, backoff_s=1, then={"ok": True})
+""")
+    assert codes(diags) == {"AS038"}
+    assert "then" in diags[0].message
+
+    # a conforming fallback stays clean
+    diags = lint("""class T(Task):
+    \"\"\"D.\"\"\"
+    returns: Out
+    on_uncertain = {"ok": False, "label": "", "n": 0}
+    on_failure = "abort"
+""")
+    assert diags == []
+
+
+def test_as039_multiple_orchestrator_roots():
+    diags = lint("""class R1(Task):
+    \"\"\"Route.\"\"\"
+    returns: Out
+    a = W(v="x")
+
+class R2(Task):
+    \"\"\"Route too.\"\"\"
+    returns: Out
+    b = W(v="y")
+""")
+    assert "AS039" in codes(diags)
+    [diag] = by_code(diags, "AS039")
+    assert "R1, R2" in diag.message
+
+
+def test_as040_on_item_failure_never_fanned():
+    diags = lint("""class T(Task):
+    \"\"\"D.\"\"\"
+    v: str
+    returns: Out
+    on_item_failure = "skip_and_report"
+
+class R(Task):
+    \"\"\"Route.\"\"\"
+    returns: Out
+    a = T(v="x")
+""")
+    assert "AS040" in codes(diags)
+    # fanned out over: clean
+    diags = lint("""class T(Task):
+    \"\"\"D.\"\"\"
+    finding: Out
+    returns: Out
+    on_item_failure = "skip_and_report"
+
+class R(Task):
+    \"\"\"Route.\"\"\"
+    returns: Out
+    scan = Scan()
+    each = [T(finding=i) for i in scan.items]
+""")
+    assert "AS040" not in codes(diags)
+    # a library file (no orchestrator) is exempt
+    diags = lint("""class T(Task):
+    \"\"\"D.\"\"\"
+    returns: Out
+    on_item_failure = "skip_and_report"
+""")
+    assert "AS040" not in codes(diags)
+
+
+def test_as036_duplicate_rule_id():
+    diags = lint("""class T(Task):
+    \"\"\"D.\"\"\"
+    returns: Out
+    constraints = [
+        Rule("same-id", "First rule", why="w"),
+        Rule("same-id", "A different rule", why="w"),
+    ]
+""")
+    assert codes(diags) == {"AS036"}
+    assert "same-id" in diags[0].message
+
+
+def test_as036_shared_rule_repeats_cleanly():
+    # the same rule composed twice (same id, same text) is not a duplicate
+    diags = lint("""RULES = [Rule("shared", "Shared rule", why="w")]
+
+class T(Task):
+    \"\"\"D.\"\"\"
+    returns: Out
+    constraints = RULES + RULES
+""")
+    assert codes(diags) == set()
+
+
+def test_as037_rule_id_not_kebab():
+    diags = lint("""class T(Task):
+    \"\"\"D.\"\"\"
+    returns: Out
+    constraints = [Rule("Not_Kebab", "Some rule", why="w")]
+""")
+    assert codes(diags) == {"AS037"}
 
 
 def test_as033_unused_task():

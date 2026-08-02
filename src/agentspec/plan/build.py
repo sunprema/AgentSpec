@@ -9,25 +9,39 @@ def build_plans(module: SpecModule) -> list[ExecutionPlan]:
 
 
 def build_plan(module: SpecModule, task: TaskDef) -> ExecutionPlan:
-    binds = task.pipeline
-    var_set = {b.var for b in binds}
+    # binds and derivations interleave in class-body order; both are steps
+    items = sorted(
+        [("bind", b) for b in task.pipeline] + [("derivation", d) for d in task.derivations],
+        key=lambda item: item[1].loc.line,
+    )
+    var_set = {item.var for _, item in items}
 
     deps: dict[str, list[str]] = {}
     wave_of: dict[str, int] = {}
-    for bind in binds:
-        bind_deps = sorted(bind.referenced_roots() & var_set)
-        deps[bind.var] = bind_deps
+    for _, item in items:
+        item_deps = sorted(item.referenced_roots() & var_set)
+        deps[item.var] = item_deps
         # Sequential class-body order means real deps are already computed;
         # forward/self references (lint AS008/AS009) are simply ignored here.
-        known = [wave_of[d] for d in bind_deps if d in wave_of]
-        wave_of[bind.var] = (max(known) + 1) if known else 0
+        known = [wave_of[d] for d in item_deps if d in wave_of]
+        wave_of[item.var] = (max(known) + 1) if known else 0
 
     wave_count = max(wave_of.values(), default=-1) + 1
     waves: list[list[str]] = [[] for _ in range(wave_count)]
-    for bind in binds:
-        waves[wave_of[bind.var]].append(bind.var)
+    for _, item in items:
+        waves[wave_of[item.var]].append(item.var)
 
-    steps = [_step_plan(module, bind, wave_of[bind.var], deps[bind.var]) for bind in binds]
+    steps = [
+        _step_plan(module, item, wave_of[item.var], deps[item.var])
+        if kind == "bind"
+        else StepPlan(
+            var=item.var,
+            task="<derived>",
+            wave=wave_of[item.var],
+            depends_on=deps[item.var],
+        )
+        for kind, item in items
+    ]
     plan = ExecutionPlan(
         orchestrator=task.name,
         file=module.path,
@@ -44,9 +58,7 @@ def _step_plan(
 ) -> StepPlan:
     target = module.tasks.get(bind.task)
     exclusive = [t.name for t in (target.tools if target else []) if t.exclusive]
-    gate = None
-    if bind.gate is not None:
-        gate = bind.gate.path.dotted if bind.gate.path else bind.gate.raw
+    gate = bind.gate_condition()
     fanout_over = filter_raw = None
     if bind.fanout is not None:
         source = bind.fanout.source

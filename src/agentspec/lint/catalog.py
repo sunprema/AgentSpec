@@ -27,6 +27,15 @@ CATALOG: dict[str, tuple[str, str]] = {
     "AS033": ("unused task", "warning"),
     "AS034": ("mutating task without undo", "warning"),
     "AS035": ("fan-out task without on_item_failure", "warning"),
+    "AS036": ("duplicate rule id within a task", "warning"),
+    "AS037": ("rule id is not kebab-case", "warning"),
+    "AS038": ("fallback literal violates the output contract", "error"),
+    "AS039": ("ambiguous root: multiple orchestrator roots", "warning"),
+    "AS040": ("on_item_failure on a task nothing fans out over", "warning"),
+    "AS041": ("reduction mapping produces a value outside the enum", "warning"),
+    "AS042": ("enum value unreachable by mapping or on_uncertain", "warning"),
+    "AS043": ("derivation without a True: catch-all row", "error"),
+    "AS044": ("derivation rows with inconsistent field sets", "error"),
 }
 
 

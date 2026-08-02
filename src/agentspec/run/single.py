@@ -20,6 +20,12 @@ def load_routine(spec_path: str | Path, task_name: str | None) -> tuple[SpecModu
     name = task_name or module.root_task
     task = module.tasks.get(name or "")
     if task is None:
+        roots = sorted(module.root_tasks())
+        if task_name is None and len(roots) > 1:
+            raise RunError(
+                f"no unique root task in {spec_path}: candidates are "
+                f"{', '.join(roots)} — pass --task to pick one"
+            )
         raise RunError(f"task '{task_name or '<root>'}' not found in {spec_path}")
     returns = task.returns
     if returns is None or returns.kind != "name" or returns.name not in module.schemas:

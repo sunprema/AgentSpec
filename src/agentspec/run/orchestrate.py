@@ -87,14 +87,61 @@ def orchestrate(
             adapter_calls=counter["calls"],
         )
 
-    for bind in task.pipeline:
+    def evaluate_derivation(derivation) -> dict[str, Any]:
+        """Mechanical first-match evaluation (spec 2.2). Atoms over skipped
+        steps are false; copied values from skipped steps are null — a
+        derivation always yields a value."""
+
+        def atom_holds(atom) -> bool:
+            value = resolve(atom.path.parts)
+            if value is _SKIP:
+                return False
+            if atom.op is None:
+                return (not value) if atom.negated else bool(value)
+            return {
+                "==": lambda: value == atom.value,
+                "!=": lambda: value != atom.value,
+                ">": lambda: value > atom.value,
+                ">=": lambda: value >= atom.value,
+                "<": lambda: value < atom.value,
+                "<=": lambda: value <= atom.value,
+                "in": lambda: value in atom.value,
+            }[atom.op]()
+
+        for row in derivation.rows:
+            if all(atom_holds(atom) for atom in row.atoms):
+                output = {}
+                for field, ref in row.output.items():
+                    if ref.path is not None:
+                        resolved = resolve(ref.path.parts)
+                        output[field] = None if resolved is _SKIP else resolved
+                    else:
+                        output[field] = ref.value
+                return output
+        return {}  # no catch-all matched — lint AS043 flags this shape
+
+    items = sorted(
+        [("bind", b) for b in task.pipeline] + [("derivation", d) for d in task.derivations],
+        key=lambda item: item[1].loc.line,
+    )
+    for kind, bind in items:
+        if kind == "derivation":
+            results[bind.var] = evaluate_derivation(bind)
+            records.append(StepRecord(var=bind.var, task="<derived>", status="ok"))
+            continue
         target = module.tasks.get(bind.task)
         if target is None:
             raise RunError(f"'{bind.var}' references undefined task '{bind.task}'")
 
         if bind.gate is not None:
             gate_value = resolve(bind.gate.path.parts) if bind.gate.path else None
-            if gate_value is _SKIP or not gate_value:
+            if gate_value is _SKIP:
+                condition = False  # a skipped producer skips the gated step too
+            elif bind.gate_negated:
+                condition = not gate_value
+            else:
+                condition = bool(gate_value)
+            if not condition:
                 results[bind.var] = _SKIP
                 records.append(StepRecord(var=bind.var, task=bind.task, status="skipped"))
                 continue

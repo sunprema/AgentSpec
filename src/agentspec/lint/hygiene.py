@@ -1,6 +1,8 @@
 """Rule-hygiene and safety warnings: AS030 whys, AS031 constraint counts,
-AS033 unused tasks, AS034 undo on mutating tasks, AS035 fan-out failure modes."""
+AS033 unused tasks, AS034 undo on mutating tasks, AS035 fan-out failure
+modes, AS036 duplicate rule ids, AS037 rule id format."""
 
+import re
 from collections.abc import Iterator
 
 from agentspec.diagnostics import Diagnostic
@@ -9,14 +11,27 @@ from agentspec.parser import Rule, SpecModule
 
 CONSTRAINT_CEILING = 15  # spec §5: instruction adherence drops with count
 
+KEBAB_ID = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
+
 
 def check_hygiene(module: SpecModule) -> Iterator[Diagnostic]:
     for const in module.constants.values():
         for rule in const.rules or []:
             yield from _rule_hygiene(rule)
     for task in module.tasks.values():
+        seen_ids: dict[str, Rule] = {}
         for rule in task.constraints:
             yield from _rule_hygiene(rule)
+            prior = seen_ids.get(rule.id)
+            if prior is not None and prior.text != rule.text:
+                yield mk(
+                    "AS036",
+                    f"task '{task.name}': rule id '{rule.id}' is declared "
+                    "twice with different text — ids must be unique within "
+                    "a task's composed constraints",
+                    rule.loc,
+                )
+            seen_ids.setdefault(rule.id, rule)
         if len(task.constraints) > CONSTRAINT_CEILING:
             yield mk(
                 "AS031",
@@ -50,7 +65,13 @@ def _rule_hygiene(rule: Rule) -> Iterator[Diagnostic]:
     if rule.severity == "must" and not rule.why:
         yield mk(
             "AS030",
-            f'must-rule has no why: "{_clip(rule.text)}"',
+            f"must-rule '{rule.id}' has no why",
+            rule.loc,
+        )
+    if not KEBAB_ID.match(rule.id):
+        yield mk(
+            "AS037",
+            f"rule id '{rule.id}' is not kebab-case (lowercase words joined by hyphens)",
             rule.loc,
         )
 

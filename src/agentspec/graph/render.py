@@ -38,7 +38,7 @@ def _esc(label: str) -> str:
 
 def render_mermaid(module: SpecModule, task: TaskDef, *, failures: bool = False) -> str:
     binds = task.pipeline
-    var_set = {b.var for b in binds}
+    var_set = {b.var for b in binds} | {d.var for d in task.derivations}
     input_names = {i.name for i in task.inputs}
     lines = ["flowchart TD"]
 
@@ -65,6 +65,11 @@ def render_mermaid(module: SpecModule, task: TaskDef, *, failures: bool = False)
         open_, close = ('[["', '"]]') if bind.fanout is not None else ('["', '"]')
         lines.append(f"    {_node(bind.var)}{open_}{_esc(label)}{close}")
 
+    for derivation in task.derivations:
+        lines.append(f'    {_node(derivation.var)}{{{{"{_esc(derivation.var)} = derived"}}}}')
+        for dep in sorted(derivation.referenced_roots() & var_set):
+            lines.append(f"    {_node(dep)} --> {_node(derivation.var)}")
+
     uses_unwind = False
     for bind in binds:
         gate_root = bind.gate.path.root if bind.gate is not None and bind.gate.path else None
@@ -78,7 +83,7 @@ def render_mermaid(module: SpecModule, task: TaskDef, *, failures: bool = False)
             if dep == gate_root:
                 assert bind.gate is not None and bind.gate.path is not None
                 lines.append(
-                    f'    {_node(dep)} -. "{_esc(bind.gate.path.dotted)}" .-> {_node(bind.var)}'
+                    f'    {_node(dep)} -. "{_esc(bind.gate_condition())}" .-> {_node(bind.var)}'
                 )
             elif dep == fan_root:
                 assert fanout is not None and fanout.source.path is not None
