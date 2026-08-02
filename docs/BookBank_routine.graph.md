@@ -13,6 +13,12 @@ flowchart TD
     art["art = OpenImageRequests<br/>on failure: declared default"]
     notify["notify = NotifyIssue<br/>on failure: retry ×3 then declared default"]
     alert["alert = PushAlert<br/>on failure: declared default"]
+    route{{"route = derived"}}
+    build --> route
+    issue --> route
+    mark --> route
+    plugin --> route
+    workspace --> route
     workspace -. "workspace.resolved" .-> plugin
     _inputs --> issue
     plugin -. "plugin.usable" .-> issue
@@ -31,6 +37,7 @@ flowchart TD
     issue --> alert
     notify --> alert
     plugin --> alert
+    route --> alert
     workspace --> alert
     _unwind[/"saga unwind: undo in reverse order"/]
 ```

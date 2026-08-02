@@ -9,6 +9,9 @@ from typing import Any
 from agentspec.diagnostics import Diagnostic
 from agentspec.parser.model import (
     AttrPath,
+    DerivationAtom,
+    DerivationBind,
+    DerivationRow,
     FailurePolicy,
     FanOut,
     Filter,
@@ -360,32 +363,77 @@ class _Parser:
             return []
         return None
 
+    _RULE_KWARGS = {"why", "severity", "since"}
+
     def _rule(self, elt: ast.expr, *, strict: bool) -> Rule | None:
-        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-            return Rule(text=elt.value, bare=True, loc=self._loc(elt))
-        if (
-            isinstance(elt, ast.Tuple)
-            and 2 <= len(elt.elts) <= 3
-            and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in elt.elts)
-        ):
-            parts = [e.value for e in elt.elts]  # type: ignore[union-attr]
-            severity = parts[2] if len(parts) == 3 else "must"
-            if severity not in SEVERITIES:
-                if strict:
-                    self._diag(
-                        "P005",
-                        f"rule severity must be one of {sorted(SEVERITIES)}, got '{severity}'",
-                        elt,
-                    )
-                severity = "must"
-            return Rule(text=parts[0], why=parts[1], severity=severity, loc=self._loc(elt))
+        if isinstance(elt, ast.Call) and self._callee(elt) == "Rule":
+            return self._rule_call(elt, strict=strict)
         if strict:
             self._diag(
                 "P005",
-                'each rule must be ("text", "why"[, severity]) or a bare string',
+                'each rule must be Rule("id", "text", why=..., severity=..., '
+                "since=...); tuple and bare-string rules were removed in spec 2.0",
                 elt,
             )
         return None
+
+    def _rule_call(self, call: ast.Call, *, strict: bool) -> Rule | None:
+        def string_value(node: ast.expr, what: str) -> str | None:
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                return node.value
+            if strict:
+                self._diag("P005", f"Rule {what} must be a string literal", node)
+            return None
+
+        if len(call.args) != 2:
+            if strict:
+                self._diag(
+                    "P005",
+                    'Rule takes exactly two positional arguments: Rule("id", "text", ...)',
+                    call,
+                )
+            return None
+        rule_id = string_value(call.args[0], "id")
+        text = string_value(call.args[1], "text")
+        if rule_id is None or text is None:
+            return None
+        if not rule_id.strip():
+            if strict:
+                self._diag("P005", "Rule id must not be empty", call.args[0])
+            return None
+
+        fields: dict[str, str] = {}
+        for kw in call.keywords:
+            if kw.arg not in self._RULE_KWARGS:
+                if strict:
+                    self._diag(
+                        "P005",
+                        f"unknown Rule argument '{kw.arg}'; allowed: {sorted(self._RULE_KWARGS)}",
+                        kw.value,
+                    )
+                return None
+            value = string_value(kw.value, kw.arg)
+            if value is None:
+                return None
+            fields[kw.arg] = value
+
+        severity = fields.get("severity", "must")
+        if severity not in SEVERITIES:
+            if strict:
+                self._diag(
+                    "P005",
+                    f"rule severity must be one of {sorted(SEVERITIES)}, got '{severity}'",
+                    call,
+                )
+            severity = "must"
+        return Rule(
+            id=rule_id,
+            text=text,
+            why=fields.get("why"),
+            severity=severity,
+            since=fields.get("since"),
+            loc=self._loc(call),
+        )
 
     # -- schemas ------------------------------------------------------------
 
@@ -573,6 +621,12 @@ class _Parser:
                 task.meta = literal
             else:
                 self._diag("P008", "meta must be a literal dict", value)
+        elif isinstance(value, ast.Dict) and not all(
+            isinstance(k, ast.Constant) and isinstance(k.value, str) for k in value.keys
+        ):
+            derivation = self._derivation_bind(name, value, stmt)
+            if derivation is not None:
+                task.derivations.append(derivation)
         else:
             bind = self._bind(name, value, stmt)
             if bind is not None:
@@ -679,20 +733,144 @@ class _Parser:
 
     def _bind(self, var: str, value: ast.expr, stmt: ast.Assign) -> PipelineBind | None:
         gate: ValueRef | None = None
+        gate_negated = False
         inner = value
         if isinstance(inner, ast.IfExp):
             if not (isinstance(inner.orelse, ast.Constant) and inner.orelse.value is None):
                 self._diag("P010", "a gate's else branch must be None", inner.orelse)
-            gate = self._valueref(inner.test)
+            test = inner.test
+            if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+                gate_negated = True
+                test = test.operand
+            gate = self._valueref(test)
             inner = inner.body
         if isinstance(inner, ast.Call):
-            return self._call_bind(var, inner, stmt, gate)
+            return self._call_bind(var, inner, stmt, gate, gate_negated)
         if isinstance(inner, ast.ListComp):
-            return self._fanout_bind(var, inner, stmt, gate)
+            return self._fanout_bind(var, inner, stmt, gate, gate_negated)
         return None
 
+    _COMPARE_OPS: dict[type, str] = {
+        ast.Eq: "==",
+        ast.NotEq: "!=",
+        ast.Gt: ">",
+        ast.GtE: ">=",
+        ast.Lt: "<",
+        ast.LtE: "<=",
+        ast.In: "in",
+    }
+
+    def _derivation_bind(self, var: str, node: ast.Dict, stmt: ast.Assign) -> DerivationBind | None:
+        """A cond-dict (spec 2.2): `{condition: {field: value}, ..., True: {...}}`,
+        first match wins top to bottom."""
+        rows = []
+        for key, value in zip(node.keys, node.values, strict=True):
+            if key is None:
+                self._diag("P015", "** expansion is not allowed in a derivation", node)
+                continue
+            atoms = self._condition_atoms(key)
+            if atoms is None:
+                continue
+            output = self._derivation_output(value)
+            if output is None:
+                continue
+            rows.append(
+                DerivationRow(
+                    atoms=atoms,
+                    raw=ast.unparse(key),
+                    output=output,
+                    loc=self._loc(key),
+                )
+            )
+        if not rows:
+            return None
+        return DerivationBind(var=var, rows=rows, raw=ast.unparse(stmt.value), loc=self._loc(stmt))
+
+    def _condition_atoms(self, node: ast.expr) -> list[DerivationAtom] | None:
+        """The caged condition grammar: `True`, a path, `not path`,
+        comparisons against literals, joined by `and` only."""
+        if isinstance(node, ast.Constant) and node.value is True:
+            return []  # the catch-all
+        operands = (
+            node.values if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.And) else [node]
+        )
+        if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
+            self._diag(
+                "P015",
+                "derivation conditions may not use 'or' — split into separate rows",
+                node,
+            )
+            return None
+        atoms = []
+        for operand in operands:
+            atom = self._condition_atom(operand)
+            if atom is None:
+                return None
+            atoms.append(atom)
+        return atoms
+
+    def _condition_atom(self, node: ast.expr) -> DerivationAtom | None:
+        negated = False
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            negated, node = True, node.operand
+        if isinstance(node, ast.Compare):
+            if negated or len(node.ops) != 1:
+                self._diag("P015", "derivation comparisons cannot be chained or negated", node)
+                return None
+            op = self._COMPARE_OPS.get(type(node.ops[0]))
+            path = self._attr_path(node.left)
+            if op is None or path is None:
+                self._diag(
+                    "P015",
+                    "a derivation comparison must be `path <op> literal` with "
+                    f"op in {sorted(self._COMPARE_OPS.values())}",
+                    node,
+                )
+                return None
+            try:
+                literal = self._literal(node.comparators[0])
+            except _NotLiteral:
+                self._diag("P015", "a derivation comparison must compare against a literal", node)
+                return None
+            return DerivationAtom(path=path, op=op, value=literal)
+        path = self._attr_path(node)
+        if path is None:
+            self._diag(
+                "P015",
+                "a derivation condition must be True, a boolean path, `not path`, "
+                "or `path <op> literal`, joined by 'and'",
+                node,
+            )
+            return None
+        return DerivationAtom(path=path, negated=negated)
+
+    def _derivation_output(self, node: ast.expr) -> dict[str, ValueRef] | None:
+        if not isinstance(node, ast.Dict):
+            self._diag(
+                "P015",
+                'each derivation row must yield a dict: {"field": literal-or-path, ...}',
+                node,
+            )
+            return None
+        output: dict[str, ValueRef] = {}
+        for key, value in zip(node.keys, node.values, strict=True):
+            if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
+                self._diag("P015", "derivation output fields must be string keys", node)
+                return None
+            output[key.value] = self._valueref(value)
+        return output
+
+    def _attr_path(self, node: ast.expr) -> AttrPath | None:
+        ref = self._valueref(node)
+        return ref.path
+
     def _call_bind(
-        self, var: str, call: ast.Call, stmt: ast.Assign, gate: ValueRef | None
+        self,
+        var: str,
+        call: ast.Call,
+        stmt: ast.Assign,
+        gate: ValueRef | None,
+        gate_negated: bool = False,
     ) -> PipelineBind | None:
         if not isinstance(call.func, ast.Name):
             return None
@@ -709,17 +887,23 @@ class _Parser:
             task=call.func.id,
             kwargs=kwargs,
             gate=gate,
+            gate_negated=gate_negated,
             raw=ast.unparse(stmt.value),
             loc=self._loc(stmt),
         )
 
     def _fanout_bind(
-        self, var: str, comp: ast.ListComp, stmt: ast.Assign, gate: ValueRef | None
+        self,
+        var: str,
+        comp: ast.ListComp,
+        stmt: ast.Assign,
+        gate: ValueRef | None,
+        gate_negated: bool = False,
     ) -> PipelineBind | None:
         if not isinstance(comp.elt, ast.Call):
             self._diag("P010", "a fan-out must apply one task per item", comp)
             return None
-        bind = self._call_bind(var, comp.elt, stmt, gate)
+        bind = self._call_bind(var, comp.elt, stmt, gate, gate_negated)
         if bind is None:
             return None
         if len(comp.generators) != 1:

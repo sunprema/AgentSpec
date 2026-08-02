@@ -27,6 +27,17 @@ class TypeExpr(BaseModel):
     optional: bool = False  # `X | None`
     raw: str | None = None  # kind == "unknown"
 
+    def render(self) -> str:
+        if self.kind == "enum":
+            base = "Enum[" + ", ".join(repr(v) for v in self.values) + "]"
+        elif self.kind == "list":
+            base = f"list[{self.item.render() if self.item else '?'}]"
+        elif self.kind == "name":
+            base = self.name or "?"
+        else:
+            base = self.raw or "?"
+        return base + (" | None" if self.optional else "")
+
 
 class SchemaField(BaseModel):
     name: str
@@ -52,12 +63,15 @@ class SchemaDef(BaseModel):
 
 
 class Rule(BaseModel):
-    """One constraint: ("text", "why"[, severity]) or a bare string (spec §5)."""
+    """One constraint: Rule("id", "text", why=..., severity=..., since=...)
+    (spec §5). The id is the rule's reviewer-facing name and the anchor for
+    diff, lint, and reports."""
 
+    id: str
     text: str
     why: str | None = None
     severity: Literal["must", "should", "may"] = "must"
-    bare: bool = False  # declared as a bare string
+    since: str | None = None  # provenance: spec revision / incident
     source: str | None = None  # constant name it was composed from, if any
     loc: SourceLoc
 
@@ -134,9 +148,17 @@ class PipelineBind(BaseModel):
     task: str
     kwargs: dict[str, ValueRef] = Field(default_factory=dict)
     gate: ValueRef | None = None
+    gate_negated: bool = False  # `if not cond` — runs when the field is false
     fanout: FanOut | None = None
     raw: str
     loc: SourceLoc
+
+    def gate_condition(self) -> str | None:
+        """The gate as display text: `issue.proceed` or `not build.built`."""
+        if self.gate is None:
+            return None
+        base = self.gate.path.dotted if self.gate.path else self.gate.raw
+        return f"not {base}" if self.gate_negated else base
 
     def referenced_roots(self) -> set[str]:
         """Roots of every attribute path this bind references (its own
@@ -155,6 +177,55 @@ class PipelineBind(BaseModel):
             filt = self.fanout.filter
             if filt is not None and filt.path is not None and filt.path.root != loop_var:
                 roots.add(filt.path.root)
+        return roots
+
+
+class DerivationAtom(BaseModel):
+    """One caged condition atom: a boolean path, its negation, or a
+    comparison against a literal."""
+
+    path: AttrPath
+    negated: bool = False
+    op: Literal["==", "!=", ">", ">=", "<", "<=", "in"] | None = None
+    value: Any = None
+
+
+class DerivationRow(BaseModel):
+    """`condition: {field: literal-or-path}` — one row of a cond-dict.
+    Empty atoms = the `True:` catch-all."""
+
+    atoms: list[DerivationAtom] = Field(default_factory=list)
+    raw: str  # the condition's source text ("True" for the catch-all)
+    output: dict[str, ValueRef] = Field(default_factory=dict)
+    loc: SourceLoc
+
+    @property
+    def is_catch_all(self) -> bool:
+        return not self.atoms
+
+
+class DerivationBind(BaseModel):
+    """A mechanically-evaluated pipeline value (spec 2.2): first row whose
+    condition holds wins, top to bottom. Always yields a value — skips do
+    not propagate into or through a derivation."""
+
+    var: str
+    rows: list[DerivationRow] = Field(default_factory=list)
+    raw: str
+    loc: SourceLoc
+
+    @property
+    def has_catch_all(self) -> bool:
+        return any(row.is_catch_all for row in self.rows)
+
+    def referenced_roots(self) -> set[str]:
+        roots = set()
+        for row in self.rows:
+            for atom in row.atoms:
+                roots.add(atom.path.root)
+            for ref in row.output.values():
+                if ref.path is not None:
+                    roots.add(ref.path.root)
         return roots
 
 
@@ -185,6 +256,7 @@ class TaskDef(BaseModel):
     on_item_failure: str | None = None
     meta: dict[str, Any] | None = None
     pipeline: list[PipelineBind] = Field(default_factory=list)
+    derivations: list[DerivationBind] = Field(default_factory=list)
     unknown_attrs: list[UnknownAttr] = Field(default_factory=list)
     loc: SourceLoc
 
@@ -194,6 +266,9 @@ class TaskDef(BaseModel):
 
     def bind(self, var: str) -> PipelineBind | None:
         return next((b for b in self.pipeline if b.var == var), None)
+
+    def derivation(self, var: str) -> DerivationBind | None:
+        return next((d for d in self.derivations if d.var == var), None)
 
 
 class SpecConstant(BaseModel):

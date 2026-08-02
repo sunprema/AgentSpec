@@ -2,6 +2,9 @@
 
 from agentspec.parser.model import (
     AttrPath,
+    DerivationAtom,
+    DerivationBind,
+    DerivationRow,
     FailurePolicy,
     FanOut,
     Filter,
@@ -24,6 +27,9 @@ from agentspec.parser.parse import parse_file, parse_source
 
 __all__ = [
     "AttrPath",
+    "DerivationAtom",
+    "DerivationBind",
+    "DerivationRow",
     "FailurePolicy",
     "FanOut",
     "Filter",

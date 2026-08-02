@@ -90,9 +90,12 @@ def test_failure_declarations(module):
 
 def test_optional_inputs(module):
     alert = module.tasks["PushAlert"]
-    assert len(alert.inputs) == 6
-    assert all(i.type.optional for i in alert.inputs)
+    assert len(alert.inputs) == 7
+    optional = [i for i in alert.inputs if i.type.optional]
+    assert len(optional) == 6  # everything but the derived outcome input
     assert alert.inputs[0].type.name == "Workspace"
+    outcome = next(i for i in alert.inputs if i.name == "outcome")
+    assert not outcome.type.optional and outcome.type.name == "str"
 
 
 def test_pipeline_and_gates(module):
@@ -123,12 +126,13 @@ def test_pipeline_and_gates(module):
     # the join: PushAlert receives whole prior results by bare name
     alert = routine.bind("alert")
     assert alert.kwargs["workspace"].path.parts == ["workspace"]
-    assert len(alert.kwargs) == 6
+    assert len(alert.kwargs) == 7
+    assert alert.kwargs["outcome"].path.dotted == "route.outcome"
 
 
 def test_orchestrator_declarations(module):
     routine = module.tasks["BookbankRun"]
-    assert routine.meta["version"] == "2.0.4"
+    assert routine.meta["version"] == "2.2.0"
     assert routine.on_failure.kind == "abort"
     assert set(routine.on_uncertain) == {
         "outcome",
@@ -138,3 +142,5 @@ def test_orchestrator_declarations(module):
         "operator_action",
     }
     assert len(routine.constraints) == 3 + 7  # UNATTENDED + its own
+    [route] = routine.derivations
+    assert route.var == "route" and len(route.rows) == 8 and route.has_catch_all

@@ -2,7 +2,7 @@
 
 **A declarative specification language for autonomous AI routines.**
 
-Version 1.0 · File extension `.aspec.py`
+Version 2.0 · File extension `.aspec.py`
 
 ---
 
@@ -32,7 +32,8 @@ checkable like code, and versioned like code.
    semantics, not syntax.
 3. **Rationale is first-class.** Rules carry their _why_. Models follow
    constraints better when the cost of breaking them is stated, and reviewers
-   approve intent rather than wording.
+   approve intent rather than wording. Conformance tooling warns on any
+   must-rule without one.
 4. **Doubt and failure are declared, not improvised.** Every task states what
    to do when uncertain and what to do when it fails — including how to
    reverse what it already did.
@@ -48,7 +49,7 @@ checkable like code, and versioned like code.
 Postmortems belong here — the spec is where operational lessons accumulate."""
 
 from pydantic import BaseModel, Field
-from agentspec import Task, Tool, Enum, Retry, Escalate
+from agentspec import Task, Tool, Rule, Enum, Retry, Escalate
 
 SHARED_RULES = [ ... ]        # module-level constants: rule lists, literals
 
@@ -116,20 +117,38 @@ class TriageTicket(Task):
 
 ## 5. Rules
 
-Constraints are lists of tuples: `("rule text", "why"[, severity])`, where
-severity is `"must"` (default), `"should"`, or `"may"`. A bare string is a
-must-rule. The positional _why_ makes rationale harder to omit than include.
+Constraints are lists of named `Rule` declarations:
+
+```python
+Rule("id", "rule text", why="...", severity="...", since="...")
+```
+
+- **`id`** (positional, required): the rule's name — lowercase kebab-case,
+  unique within a task's composed constraints. Ids are how humans discuss
+  rules, how `diff` tracks them across rewording, and how reports cite them.
+  Scanning a task's ids should read as its table of contents.
+- **`text`** (positional, required): the rule itself.
+- **`why=`**: the rationale. Tooling warns on a must-rule without one.
+- **`severity=`**: `"must"` (default), `"should"`, or `"may"`.
+- **`since=`**: free-form provenance — the spec revision or incident that
+  produced the rule (e.g. `"v2.0.3(6)"`), keeping archaeology out of the why.
 
 ```python
 FINANCIAL = [
-    ("Never exceed $50 in automated value per customer",
-     "higher stakes require human sign-off; prevents infinite-refund loops"),
-    ("Check for prior recovery in the last 30 days",
-     "prevents 'apology farming'", "must"),
+    Rule("value-ceiling",
+         "Never exceed $50 in automated value per customer",
+         why="higher stakes require human sign-off; prevents "
+             "infinite-refund loops"),
+    Rule("no-apology-farming",
+         "Check for prior recovery in the last 30 days",
+         why="prevents 'apology farming'",
+         severity="must"),
 ]
 
 class Refund(Task):
-    constraints = FINANCIAL + [ ("Tag the transaction", "traceability") ]
+    constraints = FINANCIAL + [
+        Rule("tag-the-transaction", "Tag the transaction", why="traceability"),
+    ]
 ```
 
 Semantics:
@@ -139,10 +158,12 @@ Semantics:
 - A parent task's constraints bind every step inside it. A child may add
   stricter rules; it may never weaken a parent must.
 - Module-level rule lists compose with `+` (the only operator in the
-  language), so operational doctrine is written once and shared.
-- Conformance tooling warns on must-rules without a why, and on tasks
-  exceeding ~15 constraints (instruction adherence drops with count —
-  decompose instead).
+  language), so operational doctrine is written once and shared. A shared
+  rule keeps its id everywhere it appears.
+- Conformance tooling warns on must-rules without a why, on duplicate ids
+  within a task's composed constraints, on ids that are not kebab-case, and
+  on tasks exceeding ~15 constraints (instruction adherence drops with
+  count — decompose instead).
 
 ---
 
@@ -220,19 +241,42 @@ class Routine(Task):
   routing, restricted to `path in [literals]` or `path == literal`. Anything
   richer is judgment and belongs in a rule — and is a conformance error here.
 - **Gates**: `X(...) if cond else None` runs X only when `cond` (a boolean
-  result field of a prior step) is true. A false gate skips the step and
-  everything depending only on it — **a clean stop, never an error.**
+  result field of a prior step, or its negation `not cond`) is true. A
+  false condition skips the step and everything depending only on it —
+  **a clean stop, never an error.** Skips do not propagate through inputs
+  declared `X | None`: a consumer that tolerates a missing value still
+  runs.
 - **Types flow across binds** and are checked by tooling: producing field and
   consuming input must match (an `Enum` may widen safely into `str`).
+- **Derivations (the cond-dict).** A pipeline value computed mechanically —
+  no task call, no model judgment — from prior results:
+
+  ```python
+  route = {
+      not workspace.resolved: {"outcome": "workspace_failed", "stopped_at": "resolve_workspace"},
+      build.validator_errors > 0: {"outcome": "published_with_errors",
+                                   "validator_errors": build.validator_errors},
+      True: {"outcome": "published_draft", "stopped_at": "complete"},
+  }
+  alert = PushAlert(..., outcome=route.outcome)
+  ```
+
+  Rows match **first-match-wins, top to bottom**; `True:` is the mandatory
+  catch-all and must be last. Conditions use the same caged grammar as
+  gates and filters — a boolean path, `not path`, comparisons against
+  literals (`== != > >= < <= in [...]`) — joined by `and` only (split `or`
+  into separate rows). Row outputs are dicts of `field: literal-or-path`,
+  and every row declares the same field set. A derivation **always yields
+  a value**: skips do not propagate into or through it — a condition over a
+  skipped step's field is false, a copied value from a skipped step is
+  null. This is how a final join (an alerting step) can consume the routing
+  outcome and still run on every terminal path. The file is never executed,
+  so the dict's runtime meaning is irrelevant; these are the declared
+  semantics.
 - **The orchestrator is the reducer.** After its steps, it synthesizes its
   own `returns` from the collected results. When the reduction is a routing
-  decision, declare it as an ordered first-match-wins mapping in a rule, so
-  outcome classification is a table, not a narration.
-- **Derived values.** A value needed before the reduction exists (e.g. an
-  alerting step that keys on the final outcome) is _derived_: the consuming
-  task receives the same inputs the mapping reads and derives the value from
-  the declared table itself; the reducer must later produce the identical
-  value from the identical mapping. Never bind a name that does not exist yet.
+  decision, declare it as a derivation and copy its fields verbatim — the
+  routing is mechanical; only genuinely prose outputs are model-authored.
 
 ---
 
@@ -327,7 +371,32 @@ toolchain (all static — specs are parsed as AST, never executed):
 The specification file is where operational lessons accumulate. After every
 run that surprises — a failure, or a success that required improvisation —
 the friction moves out of the agent's head and into the file: a new rule
-with the incident as its _why_, a schema field for what the run learned and
-dropped, a gate for the path nobody had modeled. The module docstring
-carries the postmortem history. A success that silently widened what the
-routine may do is an incident too — the expensive kind.
+with the incident as its _why_ and its `since=`, a schema field for what
+the run learned and dropped, a gate for the path nobody had modeled. The
+module docstring carries the postmortem history. A success that silently
+widened what the routine may do is an incident too — the expensive kind.
+
+---
+
+## 13. Version history
+
+- **2.2** — Derivation binds: the Elixir-`cond`-shaped dict
+  (`{condition: {field: value}, ..., True: {...}}`) declares mechanically
+  evaluated pipeline values. Replaces the prose reduction mapping and the
+  "derived values" rule (a consumer now just references the derivation).
+  Earned under the two-failure rule: v2.0.4 (BookBank's alerting step had
+  to re-derive the outcome from a prose table) and v2.1.1 (the prose table
+  silently drifted from its enum — an unreachable `stopped_at` value).
+- **2.1** — Negated gates: `X(...) if not cond else None` runs the step
+  when the boolean field is false. Additive; before this, running on
+  falsity required an inverse boolean field in the producer's schema.
+- **2.0** — Rules became named declarations:
+  `Rule("id", "text", why=..., severity=..., since=...)`. The tuple form
+  `("text", "why"[, severity])` and bare-string rules no longer parse.
+  Motivation: in real specs most prose lives in rules, and two adjacent
+  prose strings with no visible boundary failed review-readability; ids
+  give every rule a stable, scannable, diffable name, and `since=` moves
+  incident provenance out of why-prose. Migration: mechanical — wrap each
+  tuple, author an id, move any leading `vX.Y.Z(n):` reference into
+  `since=`.
+- **1.0** — Initial language.
