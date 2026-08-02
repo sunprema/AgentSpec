@@ -1,4 +1,4 @@
-"""The `aspec` command line: lint | plan | graph | fmt | eval | run."""
+"""The `aspec` command line: lint | plan | graph | fmt | diff | eval | run | studio."""
 
 import argparse
 import json
@@ -11,8 +11,12 @@ SUBCOMMANDS = {
     "plan": "Show the derived execution waves: concurrency, gates, fan-out",
     "graph": "Render the pipeline as a Mermaid flowchart",
     "fmt": "Format a spec file canonically",
+    "diff": "Semantic diff of two specs: capability widening flagged loudly",
     "eval": "Run fixture-based behavioral tests against a spec",
     "run": "Guarded execution of a spec (outputs validated against contracts)",
+    "studio": "Live spec workbench in the browser: canvas, inspector, gate simulator",
+    "lsp": "Language server over stdio (diagnostics in your editor)",
+    "new": "Scaffold a starter spec: worker, gated orchestrator, rules, fallbacks",
 }
 
 
@@ -33,6 +37,32 @@ def build_parser() -> argparse.ArgumentParser:
                 "the model reply, e.g. 'claude -p'",
             )
             sub.add_argument("--json", action="store_true", help="emit results as JSON")
+            continue
+        if name == "lsp":
+            continue  # no arguments: the editor speaks LSP over stdio
+        if name == "new":
+            sub.add_argument("name", help="spec name or path (.aspec.py appended if missing)")
+            continue
+        if name == "studio":
+            sub.add_argument("spec", help="path to a .aspec.py file")
+            sub.add_argument("--port", type=int, default=7788, help="port (default 7788)")
+            sub.add_argument(
+                "--no-open", action="store_true", help="do not open the browser automatically"
+            )
+            sub.add_argument(
+                "--trace",
+                help="overlay an `aspec run --json` result on the canvas (watched like the spec)",
+            )
+            sub.add_argument(
+                "--export",
+                metavar="FILE",
+                help="write the studio view as one self-contained HTML file and exit (no server)",
+            )
+            continue
+        if name == "diff":
+            sub.add_argument("old", help="path to the base .aspec.py file")
+            sub.add_argument("new", help="path to the changed .aspec.py file")
+            sub.add_argument("--json", action="store_true", help="emit changes as JSON")
             continue
         if name == "run":
             sub.add_argument("spec", help="path to a .aspec.py file")
@@ -95,10 +125,20 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_graph(args)
     if args.command == "fmt":
         return cmd_fmt(args)
+    if args.command == "diff":
+        return cmd_diff(args)
     if args.command == "eval":
         return cmd_eval(args)
     if args.command == "run":
         return cmd_run(args)
+    if args.command == "studio":
+        return cmd_studio(args)
+    if args.command == "lsp":
+        from agentspec.lsp import serve_stdio
+
+        return serve_stdio()
+    if args.command == "new":
+        return cmd_new(args)
     print(f"aspec {args.command}: not implemented yet", file=sys.stderr)
     return 2
 
@@ -229,6 +269,37 @@ def cmd_fmt(args: argparse.Namespace) -> int:
     return 1 if args.check else 0
 
 
+def cmd_diff(args: argparse.Namespace) -> int:
+    from agentspec.diff import diff_modules, render_text
+    from agentspec.parser import parse_file
+
+    modules = []
+    for path in (args.old, args.new):
+        try:
+            # one cache per side: old and new may be checkouts of the same
+            # sibling files, and must not resolve into each other
+            module = parse_file(path, cache={})
+        except OSError as exc:
+            print(f"aspec diff: {exc}", file=sys.stderr)
+            return 2
+        if module.errors:
+            for diag in module.errors:
+                print(diag.render(), file=sys.stderr)
+            print(
+                f"aspec diff: {path} has parse errors; run `aspec lint` and fix them first",
+                file=sys.stderr,
+            )
+            return 2
+        modules.append(module)
+    changes = diff_modules(modules[0], modules[1])
+    if args.json:
+        print(json.dumps([c.model_dump() for c in changes], indent=2, default=str))
+    else:
+        print(render_text(changes, args.old, args.new))
+    # diff(1) convention: 0 same, 1 different, 2 trouble
+    return 1 if changes else 0
+
+
 def cmd_eval(args: argparse.Namespace) -> int:
     import shlex
 
@@ -309,6 +380,47 @@ def cmd_run(args: argparse.Namespace) -> int:
         if result.output is not None:
             print(json.dumps(result.output, indent=2, default=str))
     return 0 if result.status != "aborted" else 1
+
+
+def cmd_new(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from agentspec.cli.template import render_template
+    from agentspec.fmt import FormatError, format_source
+
+    path = Path(args.name if args.name.endswith(".aspec.py") else f"{args.name}.aspec.py")
+    if path.exists():
+        print(f"aspec new: {path} already exists — refusing to overwrite", file=sys.stderr)
+        return 1
+    source = render_template(path.name.removesuffix(".aspec.py"))
+    try:
+        source = format_source(source, str(path))
+    except FormatError as exc:  # template drift — still write the raw form
+        print(f"aspec new: template formatting failed ({exc}); writing unformatted")
+    path.write_text(source)
+    print(f"created {path}")
+    print(f"next: aspec lint {path}  ·  aspec studio {path}  ·  aspec graph {path}")
+    return 0
+
+
+def cmd_studio(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from agentspec.studio import export_html, serve
+
+    if not Path(args.spec).exists():
+        print(f"aspec studio: {args.spec}: no such file", file=sys.stderr)
+        return 1
+    if args.export:
+        try:
+            html = export_html(args.spec)
+        except ValueError as exc:
+            print(f"aspec studio: {exc}", file=sys.stderr)
+            return 1
+        Path(args.export).write_text(html)
+        print(f"wrote {args.export} (self-contained; simulator included)")
+        return 0
+    return serve(args.spec, port=args.port, open_browser=not args.no_open, trace_path=args.trace)
 
 
 if __name__ == "__main__":

@@ -235,6 +235,123 @@ questions the spec must answer). Semantic ambiguities discovered while
 building the toolchain are spec bugs — fix the spec, then the tool.
 
 - 2026-08-01 — Plan created.
+- 2026-08-02 — **Language spec 2.2: derivation binds** (see
+  [derivations.md](derivations.md)). The Elixir-`cond`-shaped dict —
+  chosen over a `Mapping()`/`When()` DSL (string conditions) and a ternary
+  chain (reads value-before-condition) after the user asked for a more
+  Pythonic form; the never-executed nature of specs is what makes
+  expression-keyed dicts legal surface. Decisions: (1) derivations always
+  yield — skips never propagate into or through them (atoms over skipped
+  steps are false, copied values null); this is what lets PushAlert consume
+  `route.outcome` on every terminal path; (2) conditions reuse the
+  gate/filter cage, `and`-only (P015 tells you to split `or` into rows);
+  (3) `True:` catch-all mandatory and last (AS043), consistent row fields
+  (AS044), AS041/AS042 retarget the construct natively; (4) orchestrate
+  evaluates rows mechanically — routing left the model; (5) §7 "derived
+  values" paragraph deleted; BookBank v2.2.0 replaced the prose table and
+  the derive-outcome-from-mapping rule with the `route` derivation and a
+  real `outcome` input on PushAlert.
+- 2026-08-02 — Visual-tooling backlog completed (items 3, 5, 6, studio S3).
+  (1) **Reduction-table lift**: `agentspec/reduction.py` lifts prose
+  `cond -> ('outcome', 'stage')` mappings into typed tables; lint AS041/
+  AS042 check row membership and enum reachability (on_uncertain counts as
+  a producer). AS042's first run found a real bug in the reference spec —
+  `stopped_at 'mark_started'` was unreachable; BookBank v2.1.1 adds the
+  missing `NOT mark.marked` row. Two structured-syntax strikes are now on
+  record for mapping syntax. (2) **Trace overlay**: `aspec studio --trace`
+  colors the canvas from an `aspec run --json` result; the trace file is
+  watched like the spec. Eval-path coverage deferred — evals are per-task
+  and exercise no pipeline path. (3) **Static export**: `--export` embeds
+  the payload into the single-file UI (simulator included, pins hidden);
+  subsumes the doc-generation stretch item. (4) **Studio S3**: pins +
+  notes (session-scoped) and an `/mcp` endpoint (get_spec, get_pinned,
+  highlight_node); server-mediated editing deliberately dropped — the
+  deterministic parser + file watcher make direct file edits safe, which
+  atlas could not assume. Inspector defaults to the root orchestrator so
+  the reduction table is reachable.
+- 2026-08-02 — UX hardening (see [ux-hardening.md](ux-hardening.md)), from
+  a construct-by-construct assessment with verified probes. (1) AS038:
+  fallback literals (`on_uncertain`, literal `on_failure`, `then=`)
+  validate **strictly** against the returns schema — they are
+  author-written declarations, so `"yes"` is not a bool; lint now depends
+  on eval's `build_output_model`. (2) AS039 fires on multiple
+  *orchestrator* roots only — plain multi-root files are libraries
+  (AS033's exemption); `aspec run` lists candidates when no unique root.
+  (3) AS040: `on_item_failure` on a never-fanned task. (4) Teaching hovers
+  put §5–§8 semantics at the trap sites (tool substitution, optional-input
+  skip propagation, undo's abort-only trigger). (5) **Spec 2.1: negated
+  gates** — `if not cond else None`; `PipelineBind.gate_negated` +
+  `gate_condition()` render everywhere; orchestrate evaluates it; skip
+  analysis unchanged (direction-agnostic). (6) `aspec new` (tenth
+  subcommand) scaffolds a starter spec, piped through `format_source` at
+  generation so the scaffold always meets the toolchain's own bar.
+- 2026-08-02 — **Language spec 2.0: named rules** (see
+  [rules-v2.md](rules-v2.md)). `Rule("id", "text", why=, severity=,
+  since=)` replaces tuple and bare-string rules — hard cutover, all specs
+  and fixtures migrated by hand. Ripples: parser (Rule calls only, P005
+  guides migration), lint (AS036 duplicate id, AS037 kebab-case; AS030
+  message now cites the id), diff (rules match by id — rewording is
+  `rule-text-changed`, not removed+added), run/eval prompts render
+  `[id]` and dedupe shared rules by id, studio shows ids as rule titles,
+  LSP (severity= kwarg completion replaced the tuple lexer, rule-id hover
+  and definition, rules in the outline), AS030 quickfix now inserts
+  `why=` into the Rule call. Spec doc gained a version-history section;
+  migrated specs are `aspec fmt`-canonical (one field per line).
+- 2026-08-01 — `aspec lsp` phase L2 (completions, code actions, VS Code
+  shim) — the language-server stretch item is now fully delivered.
+  Decisions: (1) the server keeps the *last good* SpecModel per document —
+  mid-keystroke text rarely parses, and completions/hover answer from the
+  last good model while diagnostics always reflect the current text;
+  (2) completion contexts are regex-on-line-prefix (after `var.`, after
+  `env.`, inside `"field": "` literal dicts, after `== "` / `in ["`) —
+  contextual and cheap, no second parser; (3) the AS030 quickfix edits only
+  single-line bare-string rules, precisely at the diagnostic's literal —
+  multi-line strings get no action rather than a wrong edit; (4) the
+  VS Code shim lives in `editors/vscode/` outside the Python package and
+  is transport-only — every feature stays in the server.
+- 2026-08-01 — `aspec lsp` phase L1 (hover, go-to-definition, document
+  symbols). Decisions: (1) position resolution is text-side — the dotted
+  identifier chain under the cursor resolves against the SpecModel by
+  context (enclosing class from SourceLoc starts), no second parse;
+  (2) hover on a result field (`issue.number`) names its producing task —
+  the cross-reference a text editor can't know; (3) rule hover matches the
+  tuple's first line only (rules span lines; the loc is the start) —
+  predictable beats clever; (4) definitions into imported sibling specs
+  return that file's own URI, absolute paths only.
+- 2026-08-01 — `aspec lsp` phase L0 added (ninth subcommand, from
+  [visual-tooling.md](visual-tooling.md) item 7; graduates the "language
+  server" stretch item). Decisions: (1) stdlib only, no pygls — JSON-RPC
+  framing over injectable binary streams is ~50 lines and keeps the
+  toolchain dependency-free; (2) full-document sync (`change: 1`) instead
+  of incremental — spec files are small and it removes the whole position-
+  patching class of bugs; (3) diagnostics republish parser P0xx + lint
+  AS0xx on open/change/save, and diagnostics belonging to imported sibling
+  specs are not attached to the open document; (4) positions are published
+  as-is from the AST (UTF-16 vs byte offsets differ only on non-ASCII
+  lines — accepted for L0).
+- 2026-08-01 — `aspec studio` added (eighth subcommand, from
+  [visual-tooling.md](visual-tooling.md) items 1–2): a stdlib-only localhost
+  server + single-file UI — wave-layered pipeline canvas with gate/failure/
+  tools/waves layers, task inspector, lint overlay, and a client-side gate
+  simulator that reuses `plan`'s skip semantics (skips do not propagate
+  through `X | None` inputs). Decisions: (1) the payload is one pure
+  function over the SpecModel — no heuristics, no model in the loop, so a
+  file save re-parses mechanically; (2) a parse with errors keeps the last
+  good canvas and banners the errors instead of blanking the UI;
+  (3) simulator toggles key on the gate *path*, not the gated step — two
+  steps gated on `build.built` are one condition, not two; (4) TypeExpr
+  gained a `render()` method, replacing per-tool copies of the same code.
+- 2026-08-01 — `aspec diff` added (seventh subcommand, from
+  [visual-tooling.md](visual-tooling.md) item 4): semantic comparison of two
+  SpecModels, every change classified by direction — `widens` (more
+  capability / less safety), `narrows`, `reshapes` (contract or wiring),
+  `neutral` (prose/meta). Decisions: (1) rules match by exact text, so a
+  reworded rule reports as removed + added — the honest reading, the old
+  rule no longer binds; (2) a new task's tools are each reported as
+  `widens`, so brand-new capability can never arrive silently inside a
+  `reshapes` change; (3) exit codes follow diff(1): 0 same, 1 different,
+  2 trouble; (4) old and new sides parse with separate caches so two
+  checkouts of the same sibling files never resolve into each other.
 - 2026-08-01 — Phase 7 complete (`aspec run` / `--orchestrate`); all six
   subcommands are now implemented. Semantics decisions: (1) `Escalate` in a
   CLI harness cannot deliver or wait — it is recorded in notes and its

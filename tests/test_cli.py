@@ -21,7 +21,18 @@ def test_no_command_prints_help(capsys):
 
 def test_every_subcommand_is_implemented():
     # No stubs remain: every advertised subcommand has a handler.
-    assert set(SUBCOMMANDS) == {"lint", "plan", "graph", "fmt", "eval", "run"}
+    assert set(SUBCOMMANDS) == {
+        "lint",
+        "plan",
+        "graph",
+        "fmt",
+        "diff",
+        "eval",
+        "run",
+        "studio",
+        "lsp",
+        "new",
+    }
 
 
 @pytest.mark.parametrize(
@@ -63,13 +74,13 @@ def test_lint_strict_promotes_warnings(capsys, tmp_path):
     spec.write_text(
         '"""D."""\n'
         "from pydantic import BaseModel\n"
-        "from agentspec import Task\n\n"
+        "from agentspec import Task, Rule\n\n"
         "class Out(BaseModel):\n"
         "    ok: bool\n\n"
         "class T(Task):\n"
         '    """Do."""\n'
         "    returns: Out\n"
-        '    constraints = ["Be careful"]\n'
+        '    constraints = [Rule("be-careful", "Be careful")]\n'
     )
     assert main(["lint", str(spec)]) == 0  # warnings alone stay exit 0
     capsys.readouterr()
@@ -85,7 +96,7 @@ def test_lint_missing_file(capsys):
 def test_plan_text_output(capsys, fixtures_dir):
     assert main(["plan", str(fixtures_dir / "bookbank_routine.aspec.py")]) == 0
     out = capsys.readouterr().out
-    assert "BookbankRun — 8 steps across 7 waves" in out
+    assert "BookbankRun — 9 steps across 7 waves" in out
     assert "plugin = VerifyPlugin  [gate: workspace.resolved]" in out
     assert "false gates skip:" in out
 
@@ -270,3 +281,23 @@ def test_eval_json_output(capsys, tmp_path, fixtures_dir):
     (report,) = json.loads(capsys.readouterr().out)
     assert report["task"] == "TriageMessage"
     assert report["results"][0]["passed"] is True
+
+
+def test_new_scaffold_is_clean(capsys, tmp_path, monkeypatch):
+    target = tmp_path / "nightly_triage"
+    assert main(["new", str(target)]) == 0
+    out = capsys.readouterr().out
+    assert "created" in out and "next:" in out
+    spec = tmp_path / "nightly_triage.aspec.py"
+    assert spec.exists()
+    assert "Nightly Triage" in spec.read_text()
+
+    # the scaffold holds the toolchain to its own standard
+    assert main(["lint", "--strict", str(spec)]) == 0
+    capsys.readouterr()
+    assert main(["fmt", "--check", str(spec)]) == 0
+    capsys.readouterr()
+
+    # refuses to overwrite
+    assert main(["new", str(target)]) == 1
+    assert "refusing to overwrite" in capsys.readouterr().err
