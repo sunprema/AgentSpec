@@ -24,6 +24,11 @@ aspec run spec.aspec.py --adapter-cmd 'claude -p' \
   derivations **mechanically** — routing decisions never touch the model.
   Aborts unwind completed steps via their declared `undo`, in reverse.
 - If there is no unique root task, pass `--task`.
+- `--dev` enables development dispatch: at declared doubt points
+  (`on_uncertain` / `Escalate`) the routine may ask the developer ONE
+  clarifying question; every question is reported as a spec gap and should
+  graduate into a rule. Production runs are always unattended — the
+  question count reaching zero is the readiness signal.
 
 Save `--json` output: it is the trace. Replay it visually with
 `aspec studio spec.aspec.py --trace result.json` (green ok, amber declared

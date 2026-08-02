@@ -91,6 +91,13 @@ def build_parser() -> argparse.ArgumentParser:
                 action="store_true",
                 help="one guarded subagent per step instead of a single agent",
             )
+            sub.add_argument(
+                "--dev",
+                action="store_true",
+                help="development dispatch: the routine may ask you ONE "
+                "clarifying question at declared doubt points; every question "
+                "is reported as a spec gap. Production is always unattended.",
+            )
             sub.add_argument("--json", action="store_true", help="emit the result as JSON")
             continue
         sub.add_argument("spec", nargs="+", help="path to a .aspec.py file")
@@ -360,6 +367,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             inputs=inputs,
             task_name=args.task,
             max_repairs=args.max_repairs,
+            ask=_terminal_ask if args.dev else None,
         )
     except (OSError, RunError, EvalError) as exc:
         print(f"aspec run: {exc}", file=sys.stderr)
@@ -379,7 +387,38 @@ def cmd_run(args: argparse.Namespace) -> int:
             print(f"  note: {note}")
         if result.output is not None:
             print(json.dumps(result.output, indent=2, default=str))
+    if args.dev and not args.json:
+        _print_gap_report(result)
     return 0 if result.status != "aborted" else 1
+
+
+def _terminal_ask(question: str) -> str | None:
+    print(f"\n[dev] the routine asks: {question}")
+    try:
+        answer = input("[dev] your answer (empty to decline): ").strip()
+    except EOFError:
+        return None
+    return answer or None
+
+
+def _print_gap_report(result) -> None:
+    if not result.clarifications:
+        print(
+            "\ndev mode: no clarifications were needed — this routine may "
+            "be ready for unattended dispatch"
+        )
+        return
+    count = len(result.clarifications)
+    print(
+        f"\ndev mode: {count} clarification(s) — each is a spec gap; "
+        "consider a rule (with a why and a since=):"
+    )
+    for index, item in enumerate(result.clarifications, 1):
+        answer = (
+            item.answer if item.answer is not None else "(declined — declared fallback applied)"
+        )
+        print(f"  {index}. [{item.task}] Q: {item.question}")
+        print(f"     A: {answer}")
 
 
 def cmd_new(args: argparse.Namespace) -> int:

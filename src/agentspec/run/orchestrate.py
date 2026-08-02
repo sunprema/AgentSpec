@@ -17,10 +17,10 @@ from uuid import uuid4
 
 from agentspec.eval import Adapter, build_output_model, render_prompt
 from agentspec.parser import PipelineBind, TaskDef
-from agentspec.run.guard import RunError, guarded_call
+from agentspec.run.guard import Ask, RunError, guarded_call
 from agentspec.run.model import RunResult, StepRecord
 from agentspec.run.policy import resolve_with_policy
-from agentspec.run.single import load_routine, place_freeform
+from agentspec.run.single import has_declared_doubt, load_routine, place_freeform
 
 _SKIP = object()
 
@@ -33,6 +33,7 @@ def orchestrate(
     inputs: dict[str, Any] | None = None,
     task_name: str | None = None,
     max_repairs: int = 2,
+    ask: Ask | None = None,
 ) -> RunResult:
     module, task = load_routine(spec_path, task_name)
     if not task.is_orchestrator:
@@ -44,6 +45,7 @@ def orchestrate(
     notes: list[str] = []
     completed: list[tuple[str, TaskDef, Any]] = []  # for reverse-order unwind
     counter = {"calls": 0}
+    clarifications: list = []
 
     def resolve(parts: list[str], loop_var: str | None = None, loop_item: Any = None) -> Any:
         root = parts[0]
@@ -70,9 +72,26 @@ def orchestrate(
 
     def guarded_step(target: TaskDef, kwargs: dict[str, Any]):
         output_model = build_output_model(module, target.returns.name)
-        prompt = render_prompt(module, target, kwargs, output_model, extra_rules=task.constraints)
-        outcome = guarded_call(adapter, prompt, output_model, max_repairs=max_repairs)
+        allow_question = ask is not None and has_declared_doubt(target)
+        prompt = render_prompt(
+            module,
+            target,
+            kwargs,
+            output_model,
+            extra_rules=task.constraints,
+            allow_question=allow_question,
+        )
+        outcome = guarded_call(
+            adapter,
+            prompt,
+            output_model,
+            max_repairs=max_repairs,
+            ask=ask if allow_question else None,
+        )
         counter["calls"] += outcome.attempts
+        for clarification in outcome.clarifications:
+            clarification.task = target.name
+            clarifications.append(clarification)
         return outcome
 
     def abort_run(failed_record: StepRecord) -> RunResult:
@@ -84,6 +103,7 @@ def orchestrate(
             status="aborted",
             steps=records,
             notes=notes,
+            clarifications=clarifications,
             adapter_calls=counter["calls"],
         )
 
@@ -191,11 +211,21 @@ def orchestrate(
     output_model = build_output_model(module, task.returns.name)
     collected = {var: (None if value is _SKIP else value) for var, value in results.items()}
     reducer_inputs = {**root_inputs, "collected_step_results": collected, "env": env}
-    prompt = render_prompt(module, task, reducer_inputs, output_model)
+    reducer_asks = ask is not None and has_declared_doubt(task)
+    prompt = render_prompt(module, task, reducer_inputs, output_model, allow_question=reducer_asks)
 
     def reduce_attempt() -> dict | None:
-        outcome = guarded_call(adapter, prompt, output_model, max_repairs=max_repairs)
+        outcome = guarded_call(
+            adapter,
+            prompt,
+            output_model,
+            max_repairs=max_repairs,
+            ask=ask if reducer_asks else None,
+        )
         counter["calls"] += outcome.attempts
+        for clarification in outcome.clarifications:
+            clarification.task = task.name
+            clarifications.append(clarification)
         if outcome.output is None:
             notes.extend(f"reduction violation: {f}" for f in outcome.failures)
         return outcome.output
@@ -213,6 +243,7 @@ def orchestrate(
         output=output,
         steps=records,
         notes=notes,
+        clarifications=clarifications,
         adapter_calls=counter["calls"],
     )
 

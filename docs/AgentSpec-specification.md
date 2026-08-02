@@ -2,7 +2,7 @@
 
 **A declarative specification language for autonomous AI routines.**
 
-Version 2.0 · File extension `.aspec.py`
+Version 2.2 · File extension `.aspec.py`
 
 ---
 
@@ -316,6 +316,26 @@ the agent is the runtime:
 6. **Finish on the contract**: the final message ends with a JSON object
    matching the root task's `returns` — real values, or a declared fallback.
    Never invent, coerce, or pad values to satisfy the shape.
+
+### Development dispatch (dev mode)
+
+A routine's semantics ARE its unattended semantics — production dispatch
+never asks. During development, a runtime MAY offer **dev mode** (explicit
+opt-in at dispatch, e.g. `aspec run --dev`), where the present developer
+can answer clarifying questions. Three rules keep it sound:
+
+1. **Askability derives from declared doubt.** A question may only arise
+   at a declared doubt point — a task with `on_uncertain` or an `Escalate`
+   failure path. A task without one asserted "I never doubt here." If the
+   developer declines, the declared fallback applies verbatim.
+2. **Clarification is not authorization.** Answers resolve questions; they
+   never override must-rules, widen tool surfaces, or skip gates — and a
+   spec's own no-questions rule binds even in dev mode. Different behavior
+   means editing the spec and rerunning.
+3. **Answers are late-bound inputs, recorded.** Every question and answer
+   lands in the run result. Each one is, by definition, a spec gap: the
+   dev run ends with a gap report, and the question count trending to zero
+   is the signal that a routine is ready for unattended dispatch.
 
 ### Non-negotiables
 

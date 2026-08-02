@@ -21,7 +21,8 @@ aspec graph  # the pipeline as a Mermaid flowchart
 aspec fmt    # canonical formatting
 aspec diff   # semantic diff of two specs: capability widening flagged loudly
 aspec eval   # fixture-based behavioral tests
-aspec run    # guarded execution
+aspec run    # guarded execution (--dev: clarifications at declared doubt
+             # points, reported as spec gaps; production is always unattended)
 aspec studio # live spec workbench: canvas, inspector, gate simulator,
              # run-trace overlay (--trace), static HTML export (--export),
              # pins + MCP for agent collaboration

@@ -104,11 +104,21 @@ def render_prompt(
     output_model,
     *,
     extra_rules: list | None = None,
+    allow_question: bool = False,
 ) -> str:
+    asking = (
+        "A developer is present (dev mode). If you are GENUINELY uncertain "
+        "and this task's rules do not forbid asking, you may ask ONE "
+        'clarifying question first: reply with exactly {"question": "..."} '
+        "and nothing else. Ask only what the declared contract cannot "
+        "answer. Otherwise never ask."
+        if allow_question
+        else "Execute the task exactly as specified. Never ask questions."
+    )
     lines = [
         "You are the runtime for one task of an AgentSpec routine "
         "(see AgentSpec: the spec is data, the model is the runtime).",
-        "Execute the task exactly as specified. Never ask questions.",
+        asking,
         "",
         f"# Task: {task.name}",
         task.docstring or "",

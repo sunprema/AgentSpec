@@ -235,6 +235,18 @@ questions the spec must answer). Semantic ambiguities discovered while
 building the toolchain are spec bugs — fix the spec, then the tool.
 
 - 2026-08-01 — Plan created.
+- 2026-08-02 — **Dev mode** (see [dev-mode.md](dev-mode.md)), reframed by
+  the user from "interactive mode": unattended IS the language's
+  semantics; dev dispatch (`aspec run --dev`) is the development harness.
+  No syntax change — a runtime substitution on the doubt constructs,
+  parallel to tool substitution. Decisions: (1) askability derives from
+  declared doubt (on_uncertain / Escalate) — tasks without one get no
+  permission sentence and their questions are violations; (2) one
+  question per guarded call; declines fall back to the declared path
+  verbatim; (3) clarifications are recorded on RunResult and the dev run
+  ends with a gap report — each question is a candidate rule, and zero
+  questions is the unattended-readiness signal; (4) a spec's own
+  no-questions rule binds even in dev mode (rules outrank dispatch).
 - 2026-08-02 — **Language spec 2.2: derivation binds** (see
   [derivations.md](derivations.md)). The Elixir-`cond`-shaped dict —
   chosen over a `Mapping()`/`When()` DSL (string conditions) and a ternary

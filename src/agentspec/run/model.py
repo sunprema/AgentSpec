@@ -5,6 +5,15 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
+class Clarification(BaseModel):
+    """One dev-mode question and its answer — by definition, a spec gap."""
+
+    task: str = ""
+    question: str
+    answer: str | None = None  # None: the human declined; the declared
+    # fallback applied
+
+
 class StepRecord(BaseModel):
     var: str
     task: str
@@ -25,4 +34,5 @@ class RunResult(BaseModel):
     report: str = ""  # the agent's run-report prose (single mode)
     steps: list[StepRecord] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+    clarifications: list[Clarification] = Field(default_factory=list)
     adapter_calls: int = 0
