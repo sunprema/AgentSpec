@@ -36,6 +36,8 @@ CATALOG: dict[str, tuple[str, str]] = {
     "AS042": ("enum value unreachable by mapping or on_uncertain", "warning"),
     "AS043": ("derivation without a True: catch-all row", "error"),
     "AS044": ("derivation rows with inconsistent field sets", "error"),
+    "AS045": ("task declares no on_failure", "warning"),
+    "AS046": ("step weakens an inherited must-rule", "error"),
 }
 
 

@@ -27,10 +27,11 @@ class Scan(Task):
 '''
 
 
-def lint(body: str, ignore: tuple[str, ...] = ("AS033",)):
-    """Lint HEADER + body. AS033 (unused task) is ignored by default because
-    the shared HEADER's helper tasks are unused in most snippets; the AS033
-    tests use self-contained sources instead."""
+def lint(body: str, ignore: tuple[str, ...] = ("AS033", "AS045")):
+    """Lint HEADER + body. AS033 (unused task) and AS045 (no on_failure) are
+    ignored by default because the shared HEADER's helper tasks are unused
+    and handlerless in most snippets; the AS033/AS045 tests use
+    self-contained sources or a narrower ignore instead."""
     diags = lint_module(parse_source(HEADER + body))
     return [d for d in diags if d.code not in ignore]
 
@@ -404,15 +405,18 @@ class Out(BaseModel):
 class Used(Task):
     """Used."""
     returns: Out
+    on_failure = "abort"
 
 class Orphan(Task):
     """Never referenced."""
     returns: Out
+    on_failure = "abort"
 
 class R(Task):
     """Route."""
     returns: Out
     a = Used()
+    on_failure = "abort"
 ''')
     )
     assert codes(diags) == {"AS033"}
@@ -432,10 +436,12 @@ class Out(BaseModel):
 class A(Task):
     """A."""
     returns: Out
+    on_failure = "abort"
 
 class B(Task):
     """B."""
     returns: Out
+    on_failure = "abort"
 ''')
     )
     assert diags == []
@@ -458,6 +464,75 @@ def test_as035_fanout_without_item_failure():
     work = [W(v=i.label) for i in scan.items]
 ''')
     assert codes(diags) == {"AS035"}
+
+
+def test_as045_missing_on_failure():
+    diags = lint(
+        '''class T(Task):
+    """D."""
+    returns: Out
+''',
+        ignore=("AS033",),
+    )
+    assert any("task 'T'" in d.message for d in by_code(diags, "AS045"))
+    diags = lint(
+        '''class T(Task):
+    """D."""
+    returns: Out
+    on_failure = "abort"
+''',
+        ignore=("AS033",),
+    )
+    assert not any(d.message.startswith("task 'T'") for d in by_code(diags, "AS045"))
+
+
+def test_as046_step_weakens_inherited_must():
+    body = '''class T(Task):
+    """D."""
+    v: str
+    returns: Out
+    constraints = [Rule("no-merge", "Merging is fine", why="w", severity="may")]
+    on_failure = "abort"
+
+class R(Task):
+    """Route."""
+    returns: Out
+    a = T(v="x")
+    constraints = [Rule("no-merge", "Never merge to main", why="w", severity="must")]
+    on_failure = "abort"
+'''
+    diags = lint(body)
+    assert "AS046" in codes(diags)
+    [diag] = by_code(diags, "AS046")
+    assert "no-merge" in diag.message and "'R'" in diag.message
+    # redeclaring at must (or not at all) is not a weakening
+    assert "AS046" not in codes(lint(body.replace('severity="may"', 'severity="must"')))
+
+
+def test_as046_transitive_through_nested_orchestrators():
+    body = '''class Leaf(Task):
+    """L."""
+    v: str
+    returns: Out
+    constraints = [Rule("no-merge", "Merging is fine", why="w", severity="should")]
+    on_failure = "abort"
+
+class Mid(Task):
+    """M."""
+    returns: Out
+    a = Leaf(v="x")
+    on_failure = "abort"
+
+class Root(Task):
+    """R."""
+    returns: Out
+    m = Mid()
+    constraints = [Rule("no-merge", "Never merge to main", why="w", severity="must")]
+    on_failure = "abort"
+'''
+    diags = lint(body)
+    [diag] = by_code(diags, "AS046")
+    assert "'Leaf'" in diag.message and "'Root'" in diag.message
 
 
 def test_p014_duplicate_definition():

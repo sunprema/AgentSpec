@@ -1,6 +1,7 @@
 """Rule-hygiene and safety warnings: AS030 whys, AS031 constraint counts,
 AS033 unused tasks, AS034 undo on mutating tasks, AS035 fan-out failure
-modes, AS036 duplicate rule ids, AS037 rule id format."""
+modes, AS036 duplicate rule ids, AS037 rule id format, AS045 undeclared
+failure behavior, AS046 weakened inherited musts."""
 
 import re
 from collections.abc import Iterator
@@ -47,6 +48,14 @@ def check_hygiene(module: SpecModule) -> Iterator[Diagnostic]:
                 "undo — an abort cannot unwind its effects",
                 task.loc,
             )
+        if task.on_failure is None:
+            yield mk(
+                "AS045",
+                f"task '{task.name}' declares no on_failure — a runtime's "
+                "only conservative reading is abort; declare the behavior "
+                "instead of implying it",
+                task.loc,
+            )
         for bind in task.pipeline:
             if bind.fanout is None:
                 continue
@@ -59,6 +68,7 @@ def check_hygiene(module: SpecModule) -> Iterator[Diagnostic]:
                     bind.loc,
                 )
     yield from _check_unused(module)
+    yield from _check_weakened_musts(module)
 
 
 def _rule_hygiene(rule: Rule) -> Iterator[Diagnostic]:
@@ -78,6 +88,47 @@ def _rule_hygiene(rule: Rule) -> Iterator[Diagnostic]:
 
 def _clip(text: str, limit: int = 60) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _check_weakened_musts(module: SpecModule) -> Iterator[Diagnostic]:
+    """AS046 (spec §5): a parent task's constraints bind every step inside
+    it — a step may add stricter rules; it may never weaken a parent must.
+    Walked transitively, since a step may itself be an orchestrator."""
+    reported: set[tuple[str, str]] = set()
+    for root in module.tasks.values():
+        if root.is_orchestrator:
+            yield from _weakened_below(module, root, {}, {root.name}, reported)
+
+
+def _weakened_below(
+    module: SpecModule,
+    parent,
+    inherited: dict[str, str],
+    visited: set[str],
+    reported: set[tuple[str, str]],
+) -> Iterator[Diagnostic]:
+    musts = dict(inherited)
+    for rule in parent.constraints:
+        if rule.severity == "must":
+            musts.setdefault(rule.id, parent.name)
+    for bind in parent.pipeline:
+        child = module.tasks.get(bind.task)
+        if child is None or child.name in visited:
+            continue
+        for rule in child.constraints:
+            owner = musts.get(rule.id)
+            if owner is None or rule.severity == "must":
+                continue
+            if (child.name, rule.id) not in reported:
+                reported.add((child.name, rule.id))
+                yield mk(
+                    "AS046",
+                    f"task '{child.name}' redeclares rule '{rule.id}' as "
+                    f"{rule.severity}, weakening a must inherited from "
+                    f"'{owner}' — a step may never weaken a parent must",
+                    rule.loc,
+                )
+        yield from _weakened_below(module, child, musts, visited | {child.name}, reported)
 
 
 def _check_unused(module: SpecModule) -> Iterator[Diagnostic]:

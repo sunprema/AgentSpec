@@ -163,7 +163,9 @@ Semantics:
 - Conformance tooling warns on must-rules without a why, on duplicate ids
   within a task's composed constraints, on ids that are not kebab-case, and
   on tasks exceeding ~15 constraints (instruction adherence drops with
-  count — decompose instead).
+  count — decompose instead). A step redeclaring an inherited must at a
+  lower severity is an error, not a warning — §5's "never weaken" is
+  checked along every orchestrator's pipeline, transitively.
 
 ---
 
@@ -369,8 +371,8 @@ toolchain (all static — specs are parsed as AST, never executed):
 
 - **lint** — structure, reserved attributes, rule hygiene (whys, counts),
   cross-task type flow on every bind, gate and fan-out validity, failure
-  declarations (terminating `then`, no bare "ask a human"). `--strict` exits
-  nonzero on warnings, for CI.
+  declarations (terminating `then`, no bare "ask a human", a task declaring
+  no `on_failure` at all). `--strict` exits nonzero on warnings, for CI.
 - **plan** — the derived execution waves: what runs concurrently, what waits,
   what fans out, what a gate skips. False concurrency in the plan reveals a
   missing data dependency; sequencing that matters must appear as a bind.
