@@ -116,6 +116,100 @@ def test_as008_unknown_root():
     assert "AS008" in _diag_codes(src)
 
 
+def test_as008_bind_referencing_later_derivation():
+    src = SPEC.replace(
+        "    route = {\n"
+        '        not check.ok: {"outcome": "failed", "count": 0},\n'
+        '        check.count > 3: {"outcome": "busy", "count": check.count},\n'
+        '        True: {"outcome": "fine", "count": check.count},\n'
+        "    }\n"
+        "    record = Record(outcome=route.outcome)\n",
+        "    record = Record(outcome=route.outcome)\n"
+        "    route = {\n"
+        '        not check.ok: {"outcome": "failed", "count": 0},\n'
+        '        check.count > 3: {"outcome": "busy", "count": check.count},\n'
+        '        True: {"outcome": "fine", "count": check.count},\n'
+        "    }\n",
+    )
+    assert src != SPEC
+    assert "AS008" in _diag_codes(src)
+
+
+def test_as008_derivation_referencing_later_bind():
+    src = SPEC.replace("not check.ok:", "not record.noted:")
+    assert "AS008" in _diag_codes(src)
+
+
+def test_as008_derivation_referencing_itself():
+    src = SPEC.replace('"count": 0', '"count": route.count')
+    assert "AS008" in _diag_codes(src)
+
+
+def test_as009_cycle_across_bind_derivation_boundary():
+    src = SPEC.replace(
+        '    route = {\n        not check.ok: {"outcome": "failed", "count": 0},\n',
+        '    route = {\n        not record.noted: {"outcome": "failed", "count": 0},\n',
+    ).replace(
+        "    record = Record(outcome=route.outcome)\n",
+        "",
+    )
+    src = src.replace(
+        "    check = Check()\n",
+        "    check = Check()\n    record = Record(outcome=route.outcome)\n",
+    )
+    codes = _diag_codes(src)
+    assert "AS009" in codes  # record -> route -> record
+    assert "AS008" in codes  # and the forward reference itself
+
+
+def test_as011_gate_on_later_derivation():
+    src = SPEC.replace(
+        "    route = {",
+        '    early = Record(outcome="x") if route.go else None\n    route = {',
+    )
+    assert "AS011" in _diag_codes(src)
+
+
+def test_as020_row_literal_outside_consumer_enum():
+    src = SPEC.replace("    outcome: str", '    outcome: Enum["failed", "busy", "fine"]').replace(
+        "from agentspec import Task", "from agentspec import Task, Enum"
+    )
+    assert "AS020" not in _diag_codes(src)  # the literal join is a subset
+    bad = src.replace('{"outcome": "failed", "count": 0}', '{"outcome": "exploded", "count": 0}')
+    assert "AS020" in _diag_codes(bad)
+
+
+def test_as020_derivation_field_into_wrong_kind():
+    src = SPEC.replace("    outcome: str", "    outcome: str\n    count: int").replace(
+        "Record(outcome=route.outcome)", "Record(outcome=route.outcome, count=route.outcome)"
+    )
+    assert "AS020" in _diag_codes(src)  # Enum['busy','failed','fine'] into int
+
+
+def test_int_rows_flow_into_int_input():
+    src = (
+        SPEC.replace('"count": check.count', '"count": 1')
+        .replace("    outcome: str", "    outcome: str\n    count: int")
+        .replace(
+            "Record(outcome=route.outcome)", "Record(outcome=route.outcome, count=route.count)"
+        )
+    )
+    assert not {"AS020", "AS021", "AS022"} & _diag_codes(src)
+
+
+def test_copied_row_value_stays_opaque():
+    # route.count copies check.count in two rows — no literal join, no verdict
+    src = SPEC.replace("    outcome: str", "    outcome: str\n    count: str").replace(
+        "Record(outcome=route.outcome)", "Record(outcome=route.outcome, count=route.count)"
+    )
+    assert "AS020" not in _diag_codes(src)
+
+
+def test_as022_field_access_on_joined_enum():
+    src = SPEC.replace("route.outcome", "route.outcome.loud")
+    assert "AS022" in _diag_codes(src)
+
+
 def test_as041_as042_target_derivations():
     enum_spec = SPEC.replace(
         "class Note(BaseModel):\n    noted: bool",

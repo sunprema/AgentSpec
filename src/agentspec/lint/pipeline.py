@@ -106,6 +106,13 @@ def _check_gate(scope: Scope, index: int, bind: PipelineBind) -> Iterator[Diagno
         )
         return
     if gate.path.root in scope.derivations:
+        if not scope.is_prior_derivation(gate.path.root, index):
+            yield mk(
+                "AS011",
+                f"gate on '{bind.var}' must reference a prior derivation, got '{gate.raw}'",
+                gate.loc,
+            )
+            return
         yield from _check_derived_gate(scope, bind, gate.path)
         return
     if not scope.is_prior_bind(gate.path.root, index):
@@ -246,11 +253,10 @@ def _describe(type_expr: TypeExpr | None) -> str:
 
 
 def _check_cycles(task: TaskDef) -> Iterator[Diagnostic]:
-    var_set = {b.var for b in task.pipeline}
-    loc_by_var = {b.var: b.loc for b in task.pipeline}
-    graph: dict[str, set[str]] = {
-        bind.var: bind.referenced_roots() & var_set for bind in task.pipeline
-    }
+    items = list(task.pipeline) + list(task.derivations)
+    var_set = {item.var for item in items}
+    loc_by_var = {item.var: item.loc for item in items}
+    graph: dict[str, set[str]] = {item.var: item.referenced_roots() & var_set for item in items}
 
     color = dict.fromkeys(graph, 0)  # 0 white, 1 gray, 2 black
     path: list[str] = []

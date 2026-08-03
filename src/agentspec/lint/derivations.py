@@ -46,19 +46,31 @@ def _check_shape(task: TaskDef, derivation: DerivationBind) -> Iterator[Diagnost
 
 
 def _check_roots(task: TaskDef, derivation: DerivationBind) -> Iterator[Diagnostic]:
-    known = (
-        {b.var for b in task.pipeline}
-        | {d.var for d in task.derivations}
-        | {i.name for i in task.inputs}
-        | {"env"}
-    )
-    for root in sorted(derivation.referenced_roots() - known):
-        yield mk(
-            "AS008",
-            f"derivation '{derivation.var}' references '{root}', which is "
-            "not a prior step, derivation, or input",
-            derivation.loc,
-        )
+    always = {i.name for i in task.inputs} | {"env"}
+    line_of = {b.var: b.loc.line for b in task.pipeline} | {
+        d.var: d.loc.line for d in task.derivations
+    }
+    for root in sorted(derivation.referenced_roots() - always):
+        if root not in line_of:
+            yield mk(
+                "AS008",
+                f"derivation '{derivation.var}' references '{root}', which is "
+                "not a prior step, derivation, or input",
+                derivation.loc,
+            )
+        elif root == derivation.var:
+            yield mk(
+                "AS008",
+                f"derivation '{derivation.var}' references itself",
+                derivation.loc,
+            )
+        elif line_of[root] >= derivation.loc.line:
+            yield mk(
+                "AS008",
+                f"derivation '{derivation.var}' references '{root}' before it "
+                "is bound — a name must exist before it is referenced",
+                derivation.loc,
+            )
 
 
 def _check_enums(

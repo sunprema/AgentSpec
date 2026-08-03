@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from agentspec.parser import AttrPath, FanOut, SpecModule, TaskDef, TypeExpr
+from agentspec.parser import AttrPath, DerivationBind, FanOut, SpecModule, TaskDef, TypeExpr
 
 ENV_FIELDS = {"now", "cwd", "user", "platform", "run_id"}
 BUILTIN_TYPES = {"str", "int", "float", "bool"}
@@ -60,6 +60,10 @@ class Scope:
     def is_prior_bind(self, name: str, at: int) -> bool:
         return name in self.bind_index and self.bind_index[name] < at
 
+    def is_prior_derivation(self, name: str, at: int) -> bool:
+        derivation = self.derivations.get(name)
+        return derivation is not None and derivation.loc.line < self.task.pipeline[at].loc.line
+
     def resolve(self, path: AttrPath, *, at: int, fanout: FanOut | None = None) -> Resolved:
         """Resolve a path referenced by the bind at pipeline index `at`."""
         root, rest = path.parts[0], path.parts[1:]
@@ -76,15 +80,20 @@ class Scope:
             return self._walk(self.inputs[root], rest, listy=False)
         if root in self.derivations:
             derivation = self.derivations[root]
+            if derivation.loc.line >= self.task.pipeline[at].loc.line:
+                raise BoundLater(
+                    f"'{root}' is not bound until later in the pipeline — "
+                    "a name must exist before it is referenced"
+                )
             fields = {field for row in derivation.rows for field in row.output}
             if rest and rest[0] not in fields:
                 raise NoSuchField(
                     f"derivation '{root}' has no field '{rest[0]}' "
                     f"(fields: {', '.join(sorted(fields))})"
                 )
-            # field types are inferred from row literals downstream; the
-            # walk stops here with an open type
-            return Resolved(None, False)
+            if not rest:
+                return Resolved(None, False)
+            return self._walk(derivation_field_type(derivation, rest[0]), rest[1:], listy=False)
         if root in self.bind_index:
             index = self.bind_index[root]
             if index >= at:
@@ -122,6 +131,33 @@ class Scope:
             else:
                 return Resolved(None, listy)  # unknown named type: give up quietly
         return Resolved(current, listy)
+
+
+def derivation_field_type(derivation: DerivationBind, field: str) -> TypeExpr | None:
+    """The join of a derivation field's row values (spec 2.2). Every literal
+    is known at parse time, so strings join into a closed Enum and numbers
+    into their widest kind; a copied path or a mixed join is opaque (None)."""
+    values = []
+    for row in derivation.rows:
+        ref = row.output.get(field)
+        if ref is None:
+            continue
+        if ref.path is not None:
+            return None  # copied values take the producer's type at runtime
+        values.append(ref.value)
+    if not values or any(value is None for value in values):
+        return None
+    if all(isinstance(value, bool) for value in values):
+        return TypeExpr(kind="name", name="bool")
+    if any(isinstance(value, bool) for value in values):
+        return None
+    if all(isinstance(value, int) for value in values):
+        return TypeExpr(kind="name", name="int")
+    if all(isinstance(value, (int, float)) for value in values):
+        return TypeExpr(kind="name", name="float")
+    if all(isinstance(value, str) for value in values):
+        return TypeExpr(kind="enum", values=sorted(set(values)))
+    return None
 
 
 def compatible(
