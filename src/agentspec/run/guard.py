@@ -5,18 +5,28 @@ Dev mode: when an `ask` callback is supplied, a reply of exactly
 {"question": "..."} is answered by the present human once per call and the
 model re-prompted with the answer; without the callback (unattended
 dispatch) the same reply is a violation fed back verbatim.
+
+The run envelope (spec §9): a fenced block tagged `json envelope` before
+the final JSON is the agent's channel for mandated recordings — tool
+substitutions and conservatively resolved rule conflicts. It is stripped
+before contract validation and parsed leniently: a malformed block is
+noted and ignored, never a violation — the envelope can never fail a
+conforming run.
 """
 
 import json
+import re
 from collections.abc import Callable
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
 from agentspec.eval import Adapter, EvalError, extract_json
-from agentspec.run.model import Clarification
+from agentspec.run.model import Clarification, RuleConflict, Substitution
 
 Ask = Callable[[str], str | None]
+
+_ENVELOPE_RE = re.compile(r"```json\s+envelope\s*\n(.*?)```", re.S)
 
 
 class RunError(Exception):
@@ -28,6 +38,9 @@ class GuardOutcome(BaseModel):
     attempts: int
     failures: list[str] = Field(default_factory=list)
     clarifications: list[Clarification] = Field(default_factory=list)
+    substitutions: list[Substitution] = Field(default_factory=list)
+    rule_conflicts: list[RuleConflict] = Field(default_factory=list)
+    envelope_warning: str = ""  # malformed envelope block (telemetry only)
     raw: str = ""
 
 
@@ -46,18 +59,32 @@ def guarded_call(
     attempts, repairs, questions = 1, 0, 0
     history: list[str] = []
     clarifications: list[Clarification] = []
+    raws: list[str] = [raw]
 
     def done(output: Any = None) -> GuardOutcome:
+        # The latest reply carrying an envelope block wins: repair replies
+        # are JSON-only, so the recordings usually ride an earlier attempt.
+        substitutions: list[Substitution] = []
+        rule_conflicts: list[RuleConflict] = []
+        warning = ""
+        for text in reversed(raws):
+            parsed = _envelope_in(text)
+            if parsed is not None:
+                substitutions, rule_conflicts, warning = parsed
+                break
         return GuardOutcome(
             output=output,
             attempts=attempts,
             failures=history,
             clarifications=clarifications,
+            substitutions=substitutions,
+            rule_conflicts=rule_conflicts,
+            envelope_warning=warning,
             raw=raw or "",
         )
 
     while True:
-        question = _question_in(raw)
+        question = _question_in(_strip_envelope(raw))
         if question is not None and ask is not None and questions < max_questions:
             questions += 1
             answer = ask(question)
@@ -67,6 +94,7 @@ def guarded_call(
             if raw is None:
                 history.append(error or "adapter failed")
                 return done()
+            raws.append(raw)
             continue
         if question is not None and ask is None:
             failures = [
@@ -75,7 +103,7 @@ def guarded_call(
                 "genuinely cannot decide"
             ]
         else:
-            output, failures = _validate(raw, output_model)
+            output, failures = _validate(_strip_envelope(raw), output_model)
             if output is not None:
                 return done(output)
         history.extend(failures)
@@ -87,6 +115,7 @@ def guarded_call(
         if raw is None:
             history.append(error or "adapter failed")
             return done()
+        raws.append(raw)
 
 
 def _call(adapter: Adapter, prompt: str) -> tuple[str | None, str | None]:
@@ -129,6 +158,31 @@ def _repair_prompt(previous: str, failures: list[str], output_model) -> str:
             "Reply with ONLY the corrected JSON object.",
         ]
     )
+
+
+class _Envelope(BaseModel):
+    substitutions: list[Substitution] = Field(default_factory=list)
+    rule_conflicts: list[RuleConflict] = Field(default_factory=list)
+
+
+def _strip_envelope(raw: str | None) -> str:
+    """Remove envelope blocks before contract validation: the envelope is
+    telemetry, never part of the returns contract (spec §9)."""
+    return _ENVELOPE_RE.sub("", raw or "")
+
+
+def _envelope_in(raw: str) -> tuple[list[Substitution], list[RuleConflict], str] | None:
+    """Parse the reply's `json envelope` block. None: no block present.
+    A malformed block yields empty records plus a warning — noted and
+    ignored, never a violation."""
+    match = _ENVELOPE_RE.search(raw)
+    if match is None:
+        return None
+    try:
+        envelope = _Envelope.model_validate(json.loads(match.group(1)))
+    except (json.JSONDecodeError, ValidationError) as exc:
+        return [], [], f"malformed envelope block ignored: {str(exc).splitlines()[0]}"
+    return envelope.substitutions, envelope.rule_conflicts, ""
 
 
 def _question_in(raw: str | None) -> str | None:

@@ -383,6 +383,14 @@ def cmd_run(args: argparse.Namespace) -> int:
             print(f"  {step.status:18} {step.var} = {step.task}")
         if result.report:
             print(result.report)
+        for sub in result.substitutions:
+            reason = f" ({sub.reason})" if sub.reason else ""
+            print(f"  substitution: [{sub.task}] {sub.tool} -> {sub.used}{reason}")
+        for conflict in result.rule_conflicts:
+            print(
+                f"  rule conflict: [{conflict.task}] "
+                f"{' vs '.join(conflict.rules)} -> {conflict.resolution}"
+            )
         for note in result.notes:
             print(f"  note: {note}")
         if result.output is not None:

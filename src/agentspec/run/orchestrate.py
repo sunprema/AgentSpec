@@ -18,7 +18,7 @@ from uuid import uuid4
 from agentspec.eval import Adapter, build_output_model, render_prompt
 from agentspec.parser import PipelineBind, TaskDef
 from agentspec.run.guard import Ask, RunError, guarded_call
-from agentspec.run.model import RunResult, StepRecord
+from agentspec.run.model import RuleConflict, RunResult, StepRecord, Substitution
 from agentspec.run.policy import resolve_with_policy
 from agentspec.run.single import has_declared_doubt, load_routine, place_freeform
 
@@ -46,6 +46,16 @@ def orchestrate(
     completed: list[tuple[str, TaskDef, Any]] = []  # for reverse-order unwind
     counter = {"calls": 0}
     clarifications: list = []
+    substitutions: list[Substitution] = []
+    rule_conflicts: list[RuleConflict] = []
+
+    def collect_envelope(outcome, task_name: str) -> None:
+        for record in outcome.substitutions + outcome.rule_conflicts:
+            record.task = record.task or task_name
+        substitutions.extend(outcome.substitutions)
+        rule_conflicts.extend(outcome.rule_conflicts)
+        if outcome.envelope_warning:
+            notes.append(f"{task_name}: {outcome.envelope_warning}")
 
     def resolve(parts: list[str], loop_var: str | None = None, loop_item: Any = None) -> Any:
         root = parts[0]
@@ -92,6 +102,7 @@ def orchestrate(
         for clarification in outcome.clarifications:
             clarification.task = target.name
             clarifications.append(clarification)
+        collect_envelope(outcome, target.name)
         return outcome
 
     def abort_run(failed_record: StepRecord) -> RunResult:
@@ -104,6 +115,8 @@ def orchestrate(
             steps=records,
             notes=notes,
             clarifications=clarifications,
+            substitutions=substitutions,
+            rule_conflicts=rule_conflicts,
             adapter_calls=counter["calls"],
         )
 
@@ -226,6 +239,7 @@ def orchestrate(
         for clarification in outcome.clarifications:
             clarification.task = task.name
             clarifications.append(clarification)
+        collect_envelope(outcome, task.name)
         if outcome.output is None:
             notes.extend(f"reduction violation: {f}" for f in outcome.failures)
         return outcome.output
@@ -244,6 +258,8 @@ def orchestrate(
         steps=records,
         notes=notes,
         clarifications=clarifications,
+        substitutions=substitutions,
+        rule_conflicts=rule_conflicts,
         adapter_calls=counter["calls"],
     )
 
@@ -338,6 +354,8 @@ def _unwind(adapter, completed, records, notes, counter) -> None:
         try:
             reply = adapter(prompt)
             notes.append(f"unwound {var} ({target.name}): {reply.strip()[:200]}")
+            if var in by_var:
+                by_var[var].undo_report = reply.strip()
         except Exception as exc:
             notes.append(f"undo of {var} ({target.name}) FAILED: {exc}")
         if var in by_var:

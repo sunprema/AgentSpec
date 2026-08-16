@@ -2,7 +2,7 @@
 
 **A declarative specification language for autonomous AI routines.**
 
-Version 2.2 · File extension `.aspec.py`
+Version 2.3 · File extension `.aspec.py`
 
 ---
 
@@ -189,12 +189,13 @@ A `Tool` declares a **capability, named by its preferred mechanism**, and
   capability MAY be used — e.g. GitHub MCP tools in place of the `gh` CLI —
   under three conditions: it covers only the declared ops (never a wider
   scope); every constraint applies to it identically; and the substitution is
-  recorded in the run report. Absence of a mechanism is an environment fact
-  to route around, not a task failure.
+  recorded in the run envelope (§9). Absence of a mechanism is an environment
+  fact to route around, not a task failure.
 - **Script-as-specification corollary.** If a declared script's own internal
   dependency is missing, the script becomes the specification of its effect:
   read it, reproduce its exact effect (formats, markers, idempotency) via
-  available mechanisms at the same scope, and report the substitution.
+  available mechanisms at the same scope, and record the substitution in the
+  run envelope (§9).
 - **`strict=True`** reverses substitution: that exact mechanism or nothing.
   Strict tools exist where the mechanism itself carries the guarantees
   (validators, house build procedures, signed pipelines). An unusable strict
@@ -319,7 +320,39 @@ the agent is the runtime:
    matching the root task's `returns` — real values, or a declared fallback.
    Never invent, coerce, or pad values to satisfy the shape.
 
-### Development dispatch (dev mode)
+### The run envelope
+
+The language mandates recordings — a tool substitution (§6), a rule
+conflict resolved conservatively, a dev-mode clarification, a saga unwind —
+but the routine's `returns` schema has no room for them, and must not:
+they are facts about the run, not outputs of the routine. They land in the
+**run envelope**, a language-defined wrapper the harness assembles around
+the declared output:
+
+```json
+{
+  "task": "...",
+  "status": "conforming | declared_fallback | aborted",
+  "output": { "...": "the root task's returns, unchanged" },
+  "substitutions":  [{"task": "...", "tool": "<declared>", "used": "<mechanism>", "reason": "..."}],
+  "rule_conflicts": [{"task": "...", "rules": ["<id>", "<id>"], "resolution": "..."}],
+  "clarifications": [{"task": "...", "question": "...", "answer": "..."}],
+  "steps": [{"var": "...", "task": "...", "status": "ok | skipped | declared_fallback | failed | unwound", "undo_report": "..."}]
+}
+```
+
+- **The output contract is untouched.** Rule 6 above still holds: the run
+  ends with JSON matching `returns`. The envelope wraps that output; it
+  never leaks into it, and it is never an input to any task.
+- **One reporting channel.** The agent records substitutions and rule
+  conflicts in a fenced block tagged `json envelope` before the final JSON
+  (omitted when there is nothing to record). Clarifications, step statuses,
+  and unwind reports are recorded by the harness itself.
+- **Telemetry, not contract.** A malformed envelope block is noted and
+  ignored — it can never fail a conforming run.
+- Wherever this specification says "recorded in the run report", the
+  structured record lands here; prose run reports remain for judgment
+  (what was verified versus inferred).
 
 A routine's semantics ARE its unattended semantics — production dispatch
 never asks. During development, a runtime MAY offer **dev mode** (explicit
@@ -335,7 +368,7 @@ can answer clarifying questions. Three rules keep it sound:
    spec's own no-questions rule binds even in dev mode. Different behavior
    means editing the spec and rerunning.
 3. **Answers are late-bound inputs, recorded.** Every question and answer
-   lands in the run result. Each one is, by definition, a spec gap: the
+   lands in the run envelope. Each one is, by definition, a spec gap: the
    dev run ends with a gap report, and the question count trending to zero
    is the signal that a routine is ready for unattended dispatch.
 
@@ -352,7 +385,8 @@ can answer clarifying questions. Three rules keep it sound:
   what was verified versus inferred. Never assert an unchecked root cause.
 - When a rule and convenience conflict, the rule wins. When two rules
   conflict, the more conservative action wins — and the conflict is recorded
-  so the spec's author can resolve it in the file, where it belongs.
+  in the run envelope, so the spec's author can resolve it in the file,
+  where it belongs.
 
 ---
 
@@ -384,7 +418,7 @@ toolchain (all static — specs are parsed as AST, never executed):
   declared schema, violations fed back verbatim for bounded repair, the
   declared `on_failure` honored if conformance cannot be reached; optionally
   one guarded subagent per step, receiving only its own pruned contract plus
-  inherited constraints.
+  inherited constraints. Every run emits the run envelope (§9).
 
 ---
 
@@ -402,6 +436,16 @@ widened what the routine may do is an incident too — the expensive kind.
 
 ## 13. Version history
 
+- **2.3** — The run envelope: a language-defined wrapper around the root
+  task's `returns` where mandated recordings land — `substitutions`,
+  `rule_conflicts`, `clarifications`, step statuses and unwind reports —
+  reported through a fenced `json envelope` block and assembled by the
+  harness. Motivation: §6 and §9 mandated recording substitutions and rule
+  conflicts, but the output contract ("real values only") had no room for
+  them — in practice every "record it" rule landed in summary prose or
+  nowhere. The routine's output contract is unchanged; the envelope is
+  telemetry and can never fail a conforming run. Runtime contract only —
+  no `.aspec.py` syntax changes.
 - **2.2** — Derivation binds: the Elixir-`cond`-shaped dict
   (`{condition: {field: value}, ..., True: {...}}`) declares mechanically
   evaluated pipeline values. Replaces the prose reduction mapping and the

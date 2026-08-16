@@ -59,6 +59,41 @@ def test_guarded_call_gives_up_after_bounded_repairs(fixtures_dir):
     assert len(calls) == 3
 
 
+ENVELOPE_BLOCK = (
+    "```json envelope\n"
+    '{"substitutions": [{"tool": "gh", "used": "github-mcp", '
+    '"reason": "gh binary missing"}],\n'
+    ' "rule_conflicts": [{"rules": ["a-rule", "b-rule"], '
+    '"resolution": "took the conservative branch"}]}\n'
+    "```\n"
+)
+
+
+def test_guarded_call_parses_envelope_and_strips_it_from_the_contract(fixtures_dir):
+    module = parse_file(fixtures_dir / "minimal_good.aspec.py")
+    output_model = build_output_model(module, "FileReport")
+    reply = ENVELOPE_BLOCK + json.dumps(FILE_REPORT)
+
+    outcome = guarded_call(lambda _p: reply, "do it", output_model, max_repairs=0)
+    assert outcome.output == FILE_REPORT  # the block's braces don't confuse extraction
+    (sub,) = outcome.substitutions
+    assert (sub.tool, sub.used, sub.reason) == ("gh", "github-mcp", "gh binary missing")
+    (conflict,) = outcome.rule_conflicts
+    assert conflict.rules == ["a-rule", "b-rule"]
+    assert outcome.envelope_warning == ""
+
+
+def test_guarded_call_malformed_envelope_never_fails_a_conforming_run(fixtures_dir):
+    module = parse_file(fixtures_dir / "minimal_good.aspec.py")
+    output_model = build_output_model(module, "FileReport")
+    reply = "```json envelope\nnot json at all\n```\n" + json.dumps(FILE_REPORT)
+
+    outcome = guarded_call(lambda _p: reply, "do it", output_model, max_repairs=0)
+    assert outcome.output == FILE_REPORT
+    assert outcome.substitutions == []
+    assert "malformed envelope" in outcome.envelope_warning
+
+
 # -- single-agent run --------------------------------------------------------
 
 
@@ -76,6 +111,22 @@ def test_run_routine_conforming_with_report(fixtures_dir):
     assert result.output == FILE_REPORT
     assert "verified by command" in result.report
     assert result.adapter_calls == 1
+
+
+def test_run_routine_collects_the_envelope(fixtures_dir):
+    def adapter(prompt):
+        assert "json envelope" in prompt  # the reporting channel is instructed
+        return "## Run report\nverified: nothing.\n" + ENVELOPE_BLOCK + json.dumps(FILE_REPORT)
+
+    result = run_routine(fixtures_dir / "minimal_good.aspec.py", adapter)
+    assert result.status == "conforming"
+    assert result.output == FILE_REPORT
+    (sub,) = result.substitutions
+    assert sub.task == "InboxRoutine"  # harness tags the record with its task
+    assert sub.tool == "gh"
+    (conflict,) = result.rule_conflicts
+    assert conflict.task == "InboxRoutine"
+    assert conflict.resolution == "took the conservative branch"
 
 
 def test_run_routine_abort_when_conformance_unreachable(fixtures_dir):
@@ -253,6 +304,28 @@ class R(Task):
     (undo_prompt,) = undo_prompts
     assert "Delete the thing A created." in undo_prompt
     assert any("unwound a" in note for note in result.notes)
+    assert result.steps[0].undo_report == "deleted the thing"  # structured in the envelope
+
+
+def test_orchestrate_tags_envelope_records_per_step(fixtures_dir):
+    def adapter(prompt):
+        task, _ = parse_prompt(prompt)
+        if task == "TriageMessage":
+            return ENVELOPE_BLOCK + json.dumps(
+                {"actionable": False, "category": "noise", "summary": "meh"}
+            )
+        return json.dumps(FILE_REPORT)
+
+    result = orchestrate(
+        fixtures_dir / "minimal_good.aspec.py",
+        adapter,
+        inputs={"message_text": "just chatter"},
+    )
+    assert result.status == "conforming"
+    (sub,) = result.substitutions
+    assert (sub.task, sub.tool, sub.used) == ("TriageMessage", "gh", "github-mcp")
+    (conflict,) = result.rule_conflicts
+    assert conflict.task == "TriageMessage"
 
 
 def test_orchestrate_inherits_parent_constraints(fixtures_dir):

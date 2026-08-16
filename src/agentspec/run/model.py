@@ -1,4 +1,10 @@
-"""Run results: what happened, under which declared semantics."""
+"""Run results: what happened, under which declared semantics.
+
+`RunResult` is the run envelope (spec §9): the language-defined wrapper
+around the routine's declared `returns` where mandated recordings land —
+tool substitutions (§6), conservatively resolved rule conflicts (§9),
+dev-mode clarifications, step statuses and unwind reports. The envelope is
+telemetry, never contract: it wraps the output and never leaks into it."""
 
 from typing import Any, Literal
 
@@ -14,6 +20,26 @@ class Clarification(BaseModel):
     # fallback applied
 
 
+class Substitution(BaseModel):
+    """A tool mechanism swap (spec §6): same capability, same declared
+    scope, different mechanism — including script-as-specification
+    reproductions."""
+
+    task: str = ""
+    tool: str  # the declared tool name
+    used: str  # the mechanism actually used
+    reason: str = ""  # why the preferred mechanism was unavailable
+
+
+class RuleConflict(BaseModel):
+    """Two rules conflicted; the more conservative action won (spec §9),
+    recorded so the spec's author can resolve it in the file."""
+
+    task: str = ""
+    rules: list[str] = Field(default_factory=list)  # the rule ids
+    resolution: str = ""  # the conservative action taken
+
+
 class StepRecord(BaseModel):
     var: str
     task: str
@@ -21,6 +47,7 @@ class StepRecord(BaseModel):
     attempts: int = 0
     failures: list[str] = Field(default_factory=list)
     output: Any = None
+    undo_report: str = ""  # what the saga unwind reversed (status "unwound")
 
 
 class RunResult(BaseModel):
@@ -35,4 +62,6 @@ class RunResult(BaseModel):
     steps: list[StepRecord] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     clarifications: list[Clarification] = Field(default_factory=list)
+    substitutions: list[Substitution] = Field(default_factory=list)
+    rule_conflicts: list[RuleConflict] = Field(default_factory=list)
     adapter_calls: int = 0

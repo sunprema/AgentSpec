@@ -149,6 +149,13 @@ def render_prompt(
         "# Output contract (JSON Schema)",
         json.dumps(output_model.model_json_schema(), indent=2),
         "",
+        "If you substituted a tool mechanism or resolved a rule conflict "
+        "conservatively, record it before the final JSON in a fenced block "
+        'tagged `json envelope`, shaped {"substitutions": [{"tool": '
+        '"<declared>", "used": "<mechanism>", "reason": "..."}], '
+        '"rule_conflicts": [{"rules": ["<id>", "<id>"], "resolution": '
+        '"..."}]}; omit the block when there is nothing to record.',
+        "",
         "Reply with a single JSON object matching the contract. "
         "Real values only — never invent, coerce, or pad values to satisfy the shape.",
     ]
