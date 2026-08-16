@@ -37,7 +37,7 @@ def orchestrate(
 ) -> RunResult:
     module, task = load_routine(spec_path, task_name)
     if not task.is_orchestrator:
-        raise RunError(f"task '{task.name}' has no pipeline; use `aspec run` without --orchestrate")
+        raise RunError(f"task '{task.name}' has no pipeline; use `aspec run --single-agent`")
     root_inputs = place_freeform(task, dict(inputs or {}), context)
     env = _env()
     results: dict[str, Any] = {}

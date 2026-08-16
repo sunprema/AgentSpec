@@ -19,10 +19,13 @@ aspec run spec.aspec.py --adapter-cmd 'claude -p' \
   reply; outputs are validated against the declared schemas, violations
   fed back verbatim for bounded repair (`--max-repairs`, default 2), and
   the declared `on_failure` honored if conformance cannot be reached.
-- `--orchestrate` runs one guarded subagent per step: the harness derives
-  the schedule from the binds and resolves gates, fan-out, filters, and
-  derivations **mechanically** — routing decisions never touch the model.
-  Aborts unwind completed steps via their declared `undo`, in reverse.
+- Orchestrator roots run orchestrated **by default**: one guarded
+  subagent per step, the harness deriving the schedule from the binds and
+  resolving gates, fan-out, filters, derivations, and outcomes
+  **mechanically** — routing decisions never touch the model. Aborts
+  unwind completed steps via their declared `undo`, in reverse.
+  `--single-agent` instead runs the whole routine in one guarded agent —
+  the maximally portable fallback.
 - If there is no unique root task, pass `--task`.
 - `--dev` enables development dispatch: at declared doubt points
   (`on_uncertain` / `Escalate`) the routine may ask the developer ONE

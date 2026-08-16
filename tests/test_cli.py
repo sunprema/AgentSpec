@@ -246,6 +246,7 @@ def test_run_single_agent_cli(capsys, tmp_path, fixtures_dir):
             f"{_sys.executable} {adapter}",
             "--context",
             "triage the inbox",
+            "--single-agent",
             "--json",
             str(fixtures_dir / "minimal_good.aspec.py"),
         ]
@@ -253,7 +254,52 @@ def test_run_single_agent_cli(capsys, tmp_path, fixtures_dir):
     assert exit_code == 0
     result = json.loads(capsys.readouterr().out)
     assert result["status"] == "conforming"
+    assert result["mode"] == "single"
     assert result["output"] == {"filed": False, "tracker_id": ""}
+
+
+def test_run_defaults_to_orchestrate_for_orchestrator_roots(capsys, tmp_path, fixtures_dir):
+    import sys as _sys
+
+    adapter = tmp_path / "adapter.py"
+    adapter.write_text(
+        "import sys\n"
+        "prompt = sys.stdin.read()\n"
+        "if '# Task: TriageMessage' in prompt:\n"
+        '    print(\'{"actionable": false, "category": "noise", "summary": "x"}\')\n'
+        "else:\n"
+        '    print(\'{"filed": false, "tracker_id": ""}\')\n'
+    )
+    exit_code = main(
+        [
+            "run",
+            "--adapter-cmd",
+            f"{_sys.executable} {adapter}",
+            "--input",
+            "message_text=hello",
+            "--json",
+            str(fixtures_dir / "minimal_good.aspec.py"),
+        ]
+    )
+    assert exit_code == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["mode"] == "orchestrate"  # no flag needed: the root has a pipeline
+    assert result["status"] == "conforming"
+
+
+def test_run_mode_flags_are_mutually_exclusive(capsys, fixtures_dir):
+    exit_code = main(
+        [
+            "run",
+            "--adapter-cmd",
+            "true",
+            "--orchestrate",
+            "--single-agent",
+            str(fixtures_dir / "minimal_good.aspec.py"),
+        ]
+    )
+    assert exit_code == 2
+    assert "mutually exclusive" in capsys.readouterr().err
 
 
 def test_run_bad_input_flag(capsys, fixtures_dir):

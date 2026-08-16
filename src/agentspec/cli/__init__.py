@@ -89,7 +89,15 @@ def build_parser() -> argparse.ArgumentParser:
             sub.add_argument(
                 "--orchestrate",
                 action="store_true",
-                help="one guarded subagent per step instead of a single agent",
+                help="force one guarded subagent per step (already the "
+                "default when the root task has a pipeline)",
+            )
+            sub.add_argument(
+                "--single-agent",
+                action="store_true",
+                help="run the whole routine in one guarded agent — the "
+                "maximally portable fallback (the default only for roots "
+                "with no pipeline)",
             )
             sub.add_argument(
                 "--dev",
@@ -358,7 +366,25 @@ def cmd_run(args: argparse.Namespace) -> int:
         except json.JSONDecodeError:
             inputs[name] = value
     adapter = subprocess_adapter(shlex.split(args.adapter_cmd))
-    runner = orchestrate if args.orchestrate else run_routine
+    if args.orchestrate and args.single_agent:
+        print("aspec run: --orchestrate and --single-agent are mutually exclusive", file=sys.stderr)
+        return 2
+    # Mechanical execution is the defining semantics (spec §9): an
+    # orchestrator root runs orchestrated unless --single-agent asks for
+    # the portable whole-file fallback.
+    if args.single_agent:
+        runner = run_routine
+    elif args.orchestrate:
+        runner = orchestrate
+    else:
+        from agentspec.run.single import load_routine
+
+        try:
+            _, root = load_routine(args.spec, args.task)
+        except (OSError, RunError) as exc:
+            print(f"aspec run: {exc}", file=sys.stderr)
+            return 1
+        runner = orchestrate if root.is_orchestrator else run_routine
     try:
         result = runner(
             args.spec,

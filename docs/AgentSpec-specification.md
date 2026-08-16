@@ -389,6 +389,21 @@ the agent is the runtime:
    matching the root task's `returns` — real values, or a declared fallback.
    Never invent, coerce, or pad values to satisfy the shape.
 
+### Mechanical shell, judgment kernel
+
+Everything in §7 — binds, gates, filters, fan-out, derivations, outcomes —
+is deterministically executable, and enforced determinism is a stronger
+claim than instructed determinism. The **defining semantics** is therefore
+mechanical execution: the harness derives the schedule, evaluates every §7
+construct itself, and invokes the model only *inside* task boundaries —
+one guarded call per step, each receiving only its own pruned contract
+plus inherited constraints. The reference runtime does this by default
+whenever the root task has a pipeline. A single agent interpreting the
+whole file (`aspec run --single-agent`) is a **conforming, maximally
+portable fallback** — any capable model plus this specification is a
+complete runtime — but the blast radius of a model ignoring the spec is
+then the whole routine rather than one task's interior.
+
 ### The run envelope
 
 The language mandates recordings — a tool substitution (§6), a rule
@@ -483,11 +498,13 @@ toolchain (all static — specs are parsed as AST, never executed):
 - **eval** — fixture-based behavioral tests: known inputs, schema validation
   from the declared contracts, assertions on outputs. Prompts regress
   silently; evals make spec changes gated like code changes.
-- **run / orchestrate** — guarded execution: outputs validated against the
-  declared schema, violations fed back verbatim for bounded repair, the
-  declared `on_failure` honored if conformance cannot be reached; optionally
-  one guarded subagent per step, receiving only its own pruned contract plus
-  inherited constraints. Every run emits the run envelope (§9).
+- **run** — guarded execution: outputs validated against the declared
+  schema, violations fed back verbatim for bounded repair, the declared
+  `on_failure` honored if conformance cannot be reached. Orchestrator
+  roots run mechanically by default — the harness executes the pipeline,
+  one guarded subagent per step with its own pruned contract plus
+  inherited constraints (§9); `--single-agent` selects the portable
+  whole-file fallback. Every run emits the run envelope (§9).
 
 ---
 
@@ -514,6 +531,10 @@ widened what the routine may do is an incident too — the expensive kind.
   `route` derivation, `notify-conditions`, and `silent-conditions` rules,
   which had to be kept consistent by hand. Lint now proves reachability
   of every outcome enum value and explicit alert-or-silence per ending.
+  Also in 2.6: mechanical execution became the defining runtime semantics
+  (§9 "Mechanical shell, judgment kernel") — the reference runtime
+  orchestrates pipeline roots by default, and the single whole-file agent
+  became the explicit `--single-agent` portable fallback.
 - **2.5** — Derivations became `Cond((condition, {...}), ..., (True, {...}))`
   — ordered pairs instead of the 2.2 cond-dict, which no longer parses
   (migration is mechanical: wrap each `condition: output` row as a pair).
