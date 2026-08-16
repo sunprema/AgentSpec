@@ -248,7 +248,9 @@ def _field_md(schema: SchemaDef, name: str, producer: str | None) -> str | None:
 def _tool_md(tool: ToolDecl) -> str:
     parts = [f"**{tool.name}** — tool capability"]
     surface = []
-    for attr in ("ops", "scripts", "paths"):
+    if tool.ops:
+        surface.append("ops: " + ", ".join(tool.op_display()))
+    for attr in ("scripts", "paths"):
         values = getattr(tool, attr)
         if values:
             surface.append(f"{attr}: " + ", ".join(values))

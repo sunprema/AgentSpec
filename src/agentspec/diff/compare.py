@@ -10,6 +10,7 @@ from typing import Any
 
 from agentspec.diff.model import Change
 from agentspec.parser.model import (
+    RISK_RANK,
     FailurePolicy,
     PipelineBind,
     SchemaDef,
@@ -381,7 +382,9 @@ def _diff_task(old: TaskDef, new: TaskDef, changes: list[Change]) -> None:
 
 def _surface(tool: ToolDecl) -> str:
     parts = []
-    for attr in ("ops", "scripts", "paths"):
+    if tool.ops:
+        parts.append(f"ops={tool.op_display()!r}")
+    for attr in ("scripts", "paths"):
         values = getattr(tool, attr)
         if values:
             parts.append(f"{attr}={values!r}")
@@ -398,9 +401,22 @@ def _tools_by_name(tools: list[ToolDecl]) -> dict[str, dict[str, Any]]:
     for tool in tools:
         entry = merged.setdefault(
             tool.name,
-            {"ops": [], "scripts": [], "paths": [], "strict": False, "exclusive": False},
+            {
+                "ops": [],
+                "risks": {},
+                "scripts": [],
+                "paths": [],
+                "strict": False,
+                "exclusive": False,
+            },
         )
         entry["ops"] += tool.ops
+        for op in tool.ops:
+            # merged risk is the widest any declaration grants the op
+            risk = tool.risk_of(op)
+            prior = entry["risks"].get(op)
+            if prior is None or RISK_RANK[risk] > RISK_RANK[prior]:
+                entry["risks"][op] = risk
         entry["scripts"] += tool.scripts
         entry["paths"] += tool.paths
         entry["strict"] = entry["strict"] or tool.strict
@@ -464,6 +480,34 @@ def _diff_tools(old: TaskDef, new: TaskDef, changes: list[Change]) -> None:
                     detail=f"tool '{tname}' {attr} narrowed: -{removed!r}",
                     old=before[attr],
                     new=after[attr],
+                )
+        # spec 2.4: an op moving up the read → mutate → irreversible lattice
+        # is a capability escalation even when the op list itself is unchanged
+        for op in sorted(set(before["risks"]) & set(after["risks"])):
+            old_risk, new_risk = before["risks"][op], after["risks"][op]
+            if RISK_RANK[new_risk] > RISK_RANK[old_risk]:
+                _add(
+                    changes,
+                    code="op-risk-raised",
+                    category="tool",
+                    kind="changed",
+                    direction="widens",
+                    owner=name,
+                    detail=f"tool '{tname}' op '{op}' risk raised: {old_risk} -> {new_risk}",
+                    old=old_risk,
+                    new=new_risk,
+                )
+            elif RISK_RANK[new_risk] < RISK_RANK[old_risk]:
+                _add(
+                    changes,
+                    code="op-risk-lowered",
+                    category="tool",
+                    kind="changed",
+                    direction="narrows",
+                    owner=name,
+                    detail=f"tool '{tname}' op '{op}' risk lowered: {old_risk} -> {new_risk}",
+                    old=old_risk,
+                    new=new_risk,
                 )
         if before["strict"] != after["strict"]:
             if before["strict"]:

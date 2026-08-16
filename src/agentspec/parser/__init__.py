@@ -1,6 +1,7 @@
 """Parse `.aspec.py` files into a typed SpecModel via `ast` — never by import."""
 
 from agentspec.parser.model import (
+    RISK_RANK,
     AttrPath,
     DerivationAtom,
     DerivationBind,
@@ -26,6 +27,7 @@ from agentspec.parser.model import (
 from agentspec.parser.parse import parse_file, parse_source
 
 __all__ = [
+    "RISK_RANK",
     "AttrPath",
     "DerivationAtom",
     "DerivationBind",

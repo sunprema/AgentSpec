@@ -48,6 +48,21 @@ def check_hygiene(module: SpecModule) -> Iterator[Diagnostic]:
                 "undo — an abort cannot unwind its effects",
                 task.loc,
             )
+        irreversible = sorted(
+            f"{tool.name}:{op}"
+            for tool in task.tools
+            for op in tool.ops
+            if tool.risk_of(op) == "irreversible"
+        )
+        if irreversible and not task.undo:
+            yield mk(
+                "AS047",
+                f"task '{task.name}' declares irreversible op(s) "
+                f"{', '.join(irreversible)} but no undo — an abort cannot "
+                "unwind what cannot be reversed; declare the undo (or the "
+                "closest compensating action) explicitly",
+                task.loc,
+            )
         if task.on_failure is None:
             yield mk(
                 "AS045",

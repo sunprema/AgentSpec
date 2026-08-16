@@ -76,15 +76,36 @@ class Rule(BaseModel):
     loc: SourceLoc
 
 
+RISK_RANK: dict[str, int] = {"read": 0, "mutate": 1, "irreversible": 2}
+DEFAULT_RISK = "mutate"  # an untagged op is assumed to mutate (conservative)
+
+
 class ToolDecl(BaseModel):
     name: str
     ops: list[str] = Field(default_factory=list)
+    # spec 2.4: op → declared risk ("read" | "mutate" | "irreversible").
+    # Only explicitly tagged ops appear here; risk_of() applies the default.
+    op_risks: dict[str, str] = Field(default_factory=dict)
     scripts: list[str] = Field(default_factory=list)
     paths: list[str] = Field(default_factory=list)
     strict: bool = False
     exclusive: bool = False
     extra: dict[str, Any] = Field(default_factory=dict)
     loc: SourceLoc
+
+    def risk_of(self, op: str) -> str:
+        return self.op_risks.get(op, DEFAULT_RISK)
+
+    def max_risk(self) -> str:
+        """The tool's highest op risk; an unrestricted surface (no ops) is
+        assumed to mutate."""
+        if not self.ops:
+            return DEFAULT_RISK
+        return max((self.risk_of(op) for op in self.ops), key=lambda r: RISK_RANK[r])
+
+    def op_display(self) -> list[str]:
+        """Op names, annotated with explicitly declared risk."""
+        return [f"{op} ({self.op_risks[op]})" if op in self.op_risks else op for op in self.ops]
 
 
 class FailurePolicy(BaseModel):

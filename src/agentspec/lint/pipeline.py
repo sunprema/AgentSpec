@@ -34,6 +34,7 @@ def check_pipelines(module: SpecModule) -> Iterator[Diagnostic]:
         for index, bind in enumerate(task.pipeline):
             yield from _check_bind(module, scope, index, bind)
         yield from _check_cycles(task)
+        yield from _check_shared_mutations(module, task)
 
 
 def _resolve(
@@ -250,6 +251,67 @@ def _describe(type_expr: TypeExpr | None) -> str:
     if type_expr.kind == "list":
         return f"list[{_describe(type_expr.item)}]"
     return type_expr.name or type_expr.kind
+
+
+def _check_shared_mutations(module: SpecModule, task: TaskDef) -> Iterator[Diagnostic]:
+    """AS048 (spec 2.4): two steps with no data dependency between them may
+    run concurrently (§9); if both mutate through the same op of the same
+    tool and the tool is not marked exclusive, the schedule permits a race
+    the spec never modeled."""
+    graph: dict[str, set[str]] = {b.var: b.referenced_roots() for b in task.pipeline} | {
+        d.var: d.referenced_roots() for d in task.derivations
+    }
+    known = set(graph)
+    closure: dict[str, set[str]] = {}
+
+    def close(var: str) -> set[str]:
+        if var in closure:
+            return closure[var]
+        closure[var] = set()  # pre-seed so a cycle (AS009 territory) terminates
+        for dep in graph.get(var, set()) & known:
+            closure[var] |= {dep} | close(dep)
+        return closure[var]
+
+    def mutating_ops(target: TaskDef) -> dict[tuple[str, str], bool]:
+        """(tool, op) → exclusive, for every mutate-or-worse op."""
+        ops: dict[tuple[str, str], bool] = {}
+        for tool in target.tools:
+            for op in tool.ops:
+                if tool.risk_of(op) != "read":
+                    key = (tool.name, op)
+                    ops[key] = ops.get(key, False) or tool.exclusive
+        return ops
+
+    binds = task.pipeline
+    for i, first in enumerate(binds):
+        first_task = module.tasks.get(first.task)
+        if first_task is None:
+            continue
+        first_ops = mutating_ops(first_task)
+        if not first_ops:
+            continue
+        for second in binds[i + 1 :]:
+            if first.var in close(second.var) or second.var in close(first.var):
+                continue  # ordered by data flow; never concurrent
+            second_task = module.tasks.get(second.task)
+            if second_task is None:
+                continue
+            second_ops = mutating_ops(second_task)
+            shared = sorted(
+                (tool, op)
+                for (tool, op), excl in first_ops.items()
+                if (tool, op) in second_ops and not excl and not second_ops[(tool, op)]
+            )
+            if shared:
+                tool, op = shared[0]
+                yield mk(
+                    "AS048",
+                    f"steps '{first.var}' and '{second.var}' have no data "
+                    f"dependency and may run concurrently, but both use "
+                    f"'{tool}' op '{op}' (mutating) — mark the tool "
+                    "exclusive, or make the ordering a bind",
+                    second.loc,
+                )
 
 
 def _check_cycles(task: TaskDef) -> Iterator[Diagnostic]:

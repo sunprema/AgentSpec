@@ -8,6 +8,7 @@ from typing import Any
 
 from agentspec.diagnostics import Diagnostic
 from agentspec.parser.model import (
+    RISK_RANK,
     AttrPath,
     DerivationAtom,
     DerivationBind,
@@ -658,7 +659,9 @@ class _Parser:
             return None
         tool = ToolDecl(name=node.args[0].value, loc=self._loc(node))
         for kw in node.keywords:
-            if kw.arg in {"ops", "scripts", "paths"}:
+            if kw.arg == "ops":
+                self._tool_ops(tool, kw.value)
+            elif kw.arg in {"scripts", "paths"}:
                 try:
                     value = self._literal(kw.value)
                 except _NotLiteral:
@@ -681,6 +684,38 @@ class _Parser:
                 )
                 tool.extra[kw.arg] = ast.unparse(kw.value)
         return tool
+
+    def _tool_ops(self, tool: ToolDecl, node: ast.expr) -> None:
+        """Tool ops (spec 2.4): a list of op names, each a bare string or an
+        Op("name", risk=...) tagging the op's place on the risk lattice."""
+        if not isinstance(node, ast.List):
+            self._diag("P007", "Tool ops must be a list of strings or Op(...) entries", node)
+            return
+        for elt in node.elts:
+            if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                tool.ops.append(elt.value)
+                continue
+            if not (isinstance(elt, ast.Call) and self._callee(elt) == "Op"):
+                self._diag("P007", "each op must be a string or Op('name', risk=...)", elt)
+                continue
+            if len(elt.args) != 1 or not (
+                isinstance(elt.args[0], ast.Constant) and isinstance(elt.args[0].value, str)
+            ):
+                self._diag("P007", "Op takes exactly one positional argument: the op name", elt)
+                continue
+            op_name = elt.args[0].value
+            tool.ops.append(op_name)
+            for kw in elt.keywords:
+                if kw.arg != "risk":
+                    self._diag("P007", f"unknown Op keyword '{kw.arg}'; allowed: risk", elt)
+                elif isinstance(kw.value, ast.Constant) and kw.value.value in RISK_RANK:
+                    tool.op_risks[op_name] = kw.value.value
+                else:
+                    self._diag(
+                        "P007",
+                        f"Op risk must be one of {sorted(RISK_RANK)}",
+                        kw.value,
+                    )
 
     def _failure(self, node: ast.expr) -> FailurePolicy | None:
         if isinstance(node, ast.Constant) and node.value == "abort":

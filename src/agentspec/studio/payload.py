@@ -66,7 +66,9 @@ def _schema(module: SpecModule, name: str) -> dict[str, Any]:
 
 def _surface(tool: ToolDecl) -> str:
     parts = []
-    for attr in ("ops", "scripts", "paths"):
+    if tool.ops:
+        parts.append("ops: " + ", ".join(tool.op_display()))
+    for attr in ("scripts", "paths"):
         values = getattr(tool, attr)
         if values:
             parts.append(f"{attr}: " + ", ".join(values))

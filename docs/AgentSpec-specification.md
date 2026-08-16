@@ -49,7 +49,7 @@ checkable like code, and versioned like code.
 Postmortems belong here — the spec is where operational lessons accumulate."""
 
 from pydantic import BaseModel, Field
-from agentspec import Task, Tool, Rule, Enum, Retry, Escalate
+from agentspec import Task, Tool, Op, Rule, Enum, Retry, Escalate
 
 SHARED_RULES = [ ... ]        # module-level constants: rule lists, literals
 
@@ -173,16 +173,28 @@ Semantics:
 
 ```python
 tools = [
-    Tool("gh", ops=["issue list", "pr create"]),           # a capability
+    Tool("gh", ops=[Op("issue list", risk="read"), "pr create"]),
     Tool("python3", scripts=["lib/validate.py"]),          # a script surface
     Tool("read", paths=["<root>/skills/**"]),              # a read surface
-    Tool("git", ops=["add", "commit", "push"], exclusive=True),
+    Tool("git", ops=["add", "commit", Op("push", risk="irreversible")],
+         exclusive=True),
     Tool("house-plugin", ops=["build"], strict=True),      # a mechanism
 ]
 ```
 
 A `Tool` declares a **capability, named by its preferred mechanism**, and
 `ops` / `scripts` / `paths` narrow its surface. Semantics:
+
+- **The risk lattice.** Each op sits on `read → mutate → irreversible`,
+  declared with `Op("name", risk=...)`; a bare string is an op with
+  `risk="mutate"` — the conservative default, so untagged specs are read
+  at their riskiest plausible meaning. Risk makes the stakes statically
+  visible: lint warns on an `irreversible` op in a task with no `undo`,
+  warns when two steps with no data dependency share a mutating op of a
+  non-`exclusive` tool, and `diff` reports any op moving **up** the
+  lattice as a capability escalation. Tagging is honesty, not ceremony:
+  `risk="read"` on ops that only observe is what lets the remaining
+  mutations stand out.
 
 - **Substitution.** If the preferred mechanism is unavailable (binary
   missing, endpoint down), an equivalent mechanism providing the same
@@ -436,6 +448,13 @@ widened what the routine may do is an incident too — the expensive kind.
 
 ## 13. Version history
 
+- **2.4** — The op risk lattice: `Op("name", risk=...)` places each tool op
+  on `read → mutate → irreversible` (bare strings default to `mutate`, the
+  conservative reading). Additive — no existing spec changes meaning.
+  Motivation: §8 said mutating tasks *should* declare an `undo` and the
+  riskier-diff had to guess what a surface change meant; with declared
+  risk, irreversible-without-undo, unmodeled concurrent mutation, and
+  op-risk escalation are all checked mechanically.
 - **2.3** — The run envelope: a language-defined wrapper around the root
   task's `returns` where mandated recordings land — `substitutions`,
   `rule_conflicts`, `clarifications`, step statuses and unwind reports —

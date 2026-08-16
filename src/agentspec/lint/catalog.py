@@ -38,6 +38,8 @@ CATALOG: dict[str, tuple[str, str]] = {
     "AS044": ("derivation rows with inconsistent field sets", "error"),
     "AS045": ("task declares no on_failure", "warning"),
     "AS046": ("step weakens an inherited must-rule", "error"),
+    "AS047": ("irreversible op without undo", "warning"),
+    "AS048": ("concurrent steps share a mutating op without exclusive", "warning"),
 }
 
 
