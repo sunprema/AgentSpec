@@ -61,15 +61,17 @@ execution wave, a full inspector (contracts, rules, tools, failure
 declarations), lint findings as node badges, and a gate simulator — all
 derived from the parsed SpecModel, re-parsed on every save.
 
-The routing decision is a declared derivation (spec 2.2), shown as a
-decision table:
+The routine's endings are a declared `outcomes` list (spec 2.6) — every
+terminal state's name, condition, report fields, and alerting in one
+construct — shown as a decision table:
 
-![The route derivation and its decision table](docs/images/studio-routing.png)
+![The outcomes derivation and its decision table](docs/images/studio-routing.png)
 
 Flip a gate in the simulator and watch spec §7 semantics play out — here
-`plugin.usable` is false, five steps skip, but `route` and `alert` still
-run (skips never propagate through a derivation or an `X | None` input),
-which is exactly why the operator alert fires on every terminal path:
+`plugin.usable` is false, five steps skip, but `outcomes` and `alert`
+still run (skips never propagate through a derivation or an `X | None`
+input), which is exactly why the operator alert fires on every terminal
+path:
 
 ![Simulator: a false gate skips five steps; the alert still runs](docs/images/studio-simulator.png)
 
