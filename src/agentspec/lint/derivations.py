@@ -1,6 +1,7 @@
-"""Derivation-bind checks (spec 2.2): AS043 missing catch-all, AS044
-inconsistent row keys, AS008 unknown condition roots, and the AS041/AS042
-enum checks applied natively to the construct."""
+"""Derivation-bind checks (spec 2.2, Cond pairs since 2.5): AS043 missing
+catch-all, AS044 inconsistent row keys, AS049 dead duplicate rows, AS008
+unknown condition roots, and the AS041/AS042 enum checks applied natively
+to the construct."""
 
 from collections.abc import Iterator
 
@@ -34,6 +35,17 @@ def _check_shape(task: TaskDef, derivation: DerivationBind) -> Iterator[Diagnost
                 "the last row — rows after it can never match",
                 derivation.loc,
             )
+    seen_conditions: set[str] = set()
+    for row in derivation.rows:
+        if row.raw in seen_conditions:
+            yield mk(
+                "AS049",
+                f"derivation '{derivation.var}': the row for "
+                f"'{row.raw}' can never match — an earlier row has the "
+                "same condition, and the first match wins",
+                row.loc,
+            )
+        seen_conditions.add(row.raw)
     key_sets = {frozenset(row.output) for row in derivation.rows}
     if len(key_sets) > 1:
         fields = " vs ".join(sorted("{" + ", ".join(sorted(keys)) + "}" for keys in key_sets))

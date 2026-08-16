@@ -31,7 +31,7 @@ it; the derive-outcome-from-mapping rule and the prose table are gone.
 """
 
 from pydantic import BaseModel, Field
-from agentspec import Task, Tool, Enum, Retry, Rule
+from agentspec import Task, Tool, Enum, Retry, Rule, Cond
 
 UNATTENDED = [
     Rule(
@@ -715,48 +715,72 @@ class BookbankRun(Task):
         if build.built
         else None
     )
-    route = {
-        not workspace.resolved: {
-            "outcome": "workspace_failed",
-            "stopped_at": "resolve_workspace",
-            "validator_errors": 0,
-        },
-        not plugin.usable: {
-            "outcome": "plugin_failed",
-            "stopped_at": "verify_plugin",
-            "validator_errors": 0,
-        },
-        not issue.found: {
-            "outcome": "no_work",
-            "stopped_at": "select_issue",
-            "validator_errors": 0,
-        },
-        issue.already_in_progress and not issue.redo_requested: {
-            "outcome": "already_in_progress",
-            "stopped_at": "select_issue",
-            "validator_errors": 0,
-        },
-        not mark.marked: {
-            "outcome": "generation_failed",
-            "stopped_at": "mark_started",
-            "validator_errors": 0,
-        },
-        not build.built: {
-            "outcome": "generation_failed",
-            "stopped_at": "generate_book",
-            "validator_errors": 0,
-        },
-        build.validator_errors > 0: {
-            "outcome": "published_with_errors",
-            "stopped_at": "complete",
-            "validator_errors": build.validator_errors,
-        },
-        True: {
-            "outcome": "published_draft",
-            "stopped_at": "complete",
-            "validator_errors": 0,
-        },
-    }
+    route = Cond(
+        (
+            not workspace.resolved,
+            {
+                "outcome": "workspace_failed",
+                "stopped_at": "resolve_workspace",
+                "validator_errors": 0,
+            },
+        ),
+        (
+            not plugin.usable,
+            {
+                "outcome": "plugin_failed",
+                "stopped_at": "verify_plugin",
+                "validator_errors": 0,
+            },
+        ),
+        (
+            not issue.found,
+            {
+                "outcome": "no_work",
+                "stopped_at": "select_issue",
+                "validator_errors": 0,
+            },
+        ),
+        (
+            issue.already_in_progress and not issue.redo_requested,
+            {
+                "outcome": "already_in_progress",
+                "stopped_at": "select_issue",
+                "validator_errors": 0,
+            },
+        ),
+        (
+            not mark.marked,
+            {
+                "outcome": "generation_failed",
+                "stopped_at": "mark_started",
+                "validator_errors": 0,
+            },
+        ),
+        (
+            not build.built,
+            {
+                "outcome": "generation_failed",
+                "stopped_at": "generate_book",
+                "validator_errors": 0,
+            },
+        ),
+        (
+            build.validator_errors > 0,
+            {
+                "outcome": "published_with_errors",
+                "stopped_at": "complete",
+                "validator_errors": build.validator_errors,
+            },
+        ),
+        (
+            True,
+            {
+                "outcome": "published_draft",
+                "stopped_at": "complete",
+                "validator_errors": 0,
+            },
+        ),
+    )
     alert = PushAlert(
         workspace=workspace,
         plugin=plugin,

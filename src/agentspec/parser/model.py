@@ -212,8 +212,8 @@ class DerivationAtom(BaseModel):
 
 
 class DerivationRow(BaseModel):
-    """`condition: {field: literal-or-path}` — one row of a cond-dict.
-    Empty atoms = the `True:` catch-all."""
+    """`(condition, {field: literal-or-path})` — one row of a Cond.
+    Empty atoms = the `(True, ...)` catch-all."""
 
     atoms: list[DerivationAtom] = Field(default_factory=list)
     raw: str  # the condition's source text ("True" for the catch-all)

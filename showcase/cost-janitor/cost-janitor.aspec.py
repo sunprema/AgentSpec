@@ -19,7 +19,7 @@ snapshot so the unwind is always possible.
 """
 
 from pydantic import BaseModel, Field
-from agentspec import Task, Tool, Enum, Rule
+from agentspec import Task, Tool, Enum, Rule, Cond
 
 DOCTRINE = [
     Rule(
@@ -237,12 +237,12 @@ class JanitorRun(Task):
         if plan.proceed
         else None
     )
-    route = {
-        not scan.ok: {"outcome": "scan_failed"},
-        not scan.found: {"outcome": "nothing_to_reap"},
-        not plan.proceed: {"outcome": "nothing_to_reap"},
-        True: {"outcome": "reaped"},
-    }
+    route = Cond(
+        (not scan.ok, {"outcome": "scan_failed"}),
+        (not scan.found, {"outcome": "nothing_to_reap"}),
+        (not plan.proceed, {"outcome": "nothing_to_reap"}),
+        (True, {"outcome": "reaped"}),
+    )
     report = SendReport(outcome=route.outcome, reaps=reaps, scan=scan)
 
     constraints = DOCTRINE + [

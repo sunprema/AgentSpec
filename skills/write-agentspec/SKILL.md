@@ -60,11 +60,11 @@ each  = [Work(item=i) for i in scan.items             # fan-out + caged filter
          if i.kind in ["a", "b"]]                     # (paths vs literals only)
 maybe = DoThing(...) if prior.ok else None            # gate (or `if not prior.ok`)
 
-route = {                                             # derivation: mechanical
-    not check.ok: {"outcome": "failed", "n": 0},      # routing, first match
-    check.n > 3: {"outcome": "busy", "n": check.n},   # wins top to bottom;
-    True: {"outcome": "fine", "n": check.n},          # True: catch-all is
-}                                                     # mandatory and last
+route = Cond(                                         # derivation: mechanical
+    (not check.ok, {"outcome": "failed", "n": 0}),    # routing, first match
+    (check.n > 3, {"outcome": "busy", "n": check.n}), # wins top to bottom;
+    (True, {"outcome": "fine", "n": check.n}),        # (True, ...) catch-all
+)                                                     # is mandatory and last
 alert = Notify(outcome=route.outcome)                 # consumers reference it
 
 on_uncertain = {...literal matching returns...}   # the declared doubt path

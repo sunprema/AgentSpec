@@ -21,7 +21,7 @@ weekly pass and drop the double-checks that add latency.
 """
 
 from pydantic import BaseModel, Field
-from agentspec import Task, Tool, Enum, Rule
+from agentspec import Task, Tool, Enum, Rule, Cond
 
 DOCTRINE = [
     Rule(
@@ -223,12 +223,12 @@ class JanitorRun(Task):
     scan = ScanResources()
     plan = SelectReaps(resources=scan.resources) if scan.found else None
     reaps = [ReapResource(resource=r) for r in plan.selected] if plan.proceed else None
-    route = {
-        not scan.ok: {"outcome": "scan_failed"},
-        not scan.found: {"outcome": "nothing_to_reap"},
-        not plan.proceed: {"outcome": "nothing_to_reap"},
-        True: {"outcome": "reaped"},
-    }
+    route = Cond(
+        (not scan.ok, {"outcome": "scan_failed"}),
+        (not scan.found, {"outcome": "nothing_to_reap"}),
+        (not plan.proceed, {"outcome": "nothing_to_reap"}),
+        (True, {"outcome": "reaped"}),
+    )
     report = SendReport(outcome=route.outcome, reaps=reaps, scan=scan)
 
     constraints = DOCTRINE + [

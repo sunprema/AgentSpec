@@ -1,4 +1,5 @@
-"""Derivation binds (spec 2.2): parsing, lint, plan, graph, orchestrate."""
+"""Derivation binds (spec 2.2, Cond pairs since 2.5): parsing, lint, plan,
+graph, orchestrate."""
 
 import json
 
@@ -12,7 +13,7 @@ from agentspec.run import orchestrate
 
 SPEC = '''"""Route work by its verdict."""
 from pydantic import BaseModel, Field
-from agentspec import Task
+from agentspec import Task, Cond
 
 class Verdict(BaseModel):
     ok: bool
@@ -37,11 +38,11 @@ class Routine(Task):
     returns: Note
 
     check = Check()
-    route = {
-        not check.ok: {"outcome": "failed", "count": 0},
-        check.count > 3: {"outcome": "busy", "count": check.count},
-        True: {"outcome": "fine", "count": check.count},
-    }
+    route = Cond(
+        (not check.ok, {"outcome": "failed", "count": 0}),
+        (check.count > 3, {"outcome": "busy", "count": check.count}),
+        (True, {"outcome": "fine", "count": check.count}),
+    )
     record = Record(outcome=route.outcome)
 
     on_failure = "abort"
@@ -82,8 +83,37 @@ def _diag_codes(src):
 
 
 def test_p015_or_condition():
-    src = SPEC.replace("not check.ok:", "not check.ok or check.count > 9:")
+    src = SPEC.replace("not check.ok,", "not check.ok or check.count > 9,")
+    assert src != SPEC
     assert "P015" in _diag_codes(src)
+
+
+def test_p015_legacy_cond_dict_names_the_migration():
+    src = SPEC.replace(
+        "    route = Cond(\n"
+        '        (not check.ok, {"outcome": "failed", "count": 0}),\n'
+        '        (check.count > 3, {"outcome": "busy", "count": check.count}),\n'
+        '        (True, {"outcome": "fine", "count": check.count}),\n'
+        "    )\n",
+        "    route = {\n"
+        '        not check.ok: {"outcome": "failed", "count": 0},\n'
+        '        True: {"outcome": "fine", "count": 0},\n'
+        "    }\n",
+    )
+    assert src != SPEC
+    module = parse_source(src, "routed.aspec.py")
+    legacy = [d for d in module.errors if d.code == "P015"]
+    assert legacy and "spec 2.5" in legacy[0].message
+
+
+def test_as049_duplicate_condition_row_is_dead():
+    src = SPEC.replace(
+        '        (not check.ok, {"outcome": "failed", "count": 0}),\n',
+        '        (not check.ok, {"outcome": "failed", "count": 0}),\n'
+        '        (not check.ok, {"outcome": "stuck", "count": 0}),\n',
+    )
+    assert src != SPEC
+    assert "AS049" in _diag_codes(src)
 
 
 def test_p015_non_dict_row():
@@ -92,17 +122,19 @@ def test_p015_non_dict_row():
 
 
 def test_as043_missing_catch_all():
-    src = SPEC.replace('        True: {"outcome": "fine", "count": check.count},\n', "")
+    src = SPEC.replace('        (True, {"outcome": "fine", "count": check.count}),\n', "")
+    assert src != SPEC
     assert "AS043" in _diag_codes(src)
 
 
 def test_as043_catch_all_not_last():
     src = SPEC.replace(
-        '        check.count > 3: {"outcome": "busy", "count": check.count},\n'
-        '        True: {"outcome": "fine", "count": check.count},\n',
-        '        True: {"outcome": "fine", "count": check.count},\n'
-        '        check.count > 3: {"outcome": "busy", "count": check.count},\n',
+        '        (check.count > 3, {"outcome": "busy", "count": check.count}),\n'
+        '        (True, {"outcome": "fine", "count": check.count}),\n',
+        '        (True, {"outcome": "fine", "count": check.count}),\n'
+        '        (check.count > 3, {"outcome": "busy", "count": check.count}),\n',
     )
+    assert src != SPEC
     assert "AS043" in _diag_codes(src)
 
 
@@ -112,31 +144,33 @@ def test_as044_inconsistent_fields():
 
 
 def test_as008_unknown_root():
-    src = SPEC.replace("not check.ok:", "not nothing.ok:")
+    src = SPEC.replace("not check.ok,", "not nothing.ok,")
+    assert src != SPEC
     assert "AS008" in _diag_codes(src)
 
 
 def test_as008_bind_referencing_later_derivation():
     src = SPEC.replace(
-        "    route = {\n"
-        '        not check.ok: {"outcome": "failed", "count": 0},\n'
-        '        check.count > 3: {"outcome": "busy", "count": check.count},\n'
-        '        True: {"outcome": "fine", "count": check.count},\n'
-        "    }\n"
+        "    route = Cond(\n"
+        '        (not check.ok, {"outcome": "failed", "count": 0}),\n'
+        '        (check.count > 3, {"outcome": "busy", "count": check.count}),\n'
+        '        (True, {"outcome": "fine", "count": check.count}),\n'
+        "    )\n"
         "    record = Record(outcome=route.outcome)\n",
         "    record = Record(outcome=route.outcome)\n"
-        "    route = {\n"
-        '        not check.ok: {"outcome": "failed", "count": 0},\n'
-        '        check.count > 3: {"outcome": "busy", "count": check.count},\n'
-        '        True: {"outcome": "fine", "count": check.count},\n'
-        "    }\n",
+        "    route = Cond(\n"
+        '        (not check.ok, {"outcome": "failed", "count": 0}),\n'
+        '        (check.count > 3, {"outcome": "busy", "count": check.count}),\n'
+        '        (True, {"outcome": "fine", "count": check.count}),\n'
+        "    )\n",
     )
     assert src != SPEC
     assert "AS008" in _diag_codes(src)
 
 
 def test_as008_derivation_referencing_later_bind():
-    src = SPEC.replace("not check.ok:", "not record.noted:")
+    src = SPEC.replace("not check.ok,", "not record.noted,")
+    assert src != SPEC
     assert "AS008" in _diag_codes(src)
 
 
@@ -147,8 +181,8 @@ def test_as008_derivation_referencing_itself():
 
 def test_as009_cycle_across_bind_derivation_boundary():
     src = SPEC.replace(
-        '    route = {\n        not check.ok: {"outcome": "failed", "count": 0},\n',
-        '    route = {\n        not record.noted: {"outcome": "failed", "count": 0},\n',
+        '    route = Cond(\n        (not check.ok, {"outcome": "failed", "count": 0}),\n',
+        '    route = Cond(\n        (not record.noted, {"outcome": "failed", "count": 0}),\n',
     ).replace(
         "    record = Record(outcome=route.outcome)\n",
         "",
@@ -157,6 +191,7 @@ def test_as009_cycle_across_bind_derivation_boundary():
         "    check = Check()\n",
         "    check = Check()\n    record = Record(outcome=route.outcome)\n",
     )
+    assert src != SPEC
     codes = _diag_codes(src)
     assert "AS009" in codes  # record -> route -> record
     assert "AS008" in codes  # and the forward reference itself
@@ -164,9 +199,10 @@ def test_as009_cycle_across_bind_derivation_boundary():
 
 def test_as011_gate_on_later_derivation():
     src = SPEC.replace(
-        "    route = {",
-        '    early = Record(outcome="x") if route.go else None\n    route = {',
+        "    route = Cond(",
+        '    early = Record(outcome="x") if route.go else None\n    route = Cond(',
     )
+    assert src != SPEC
     assert "AS011" in _diag_codes(src)
 
 
@@ -274,8 +310,9 @@ def test_diff_rows_by_condition():
         '{"outcome": "busy", "count": check.count}', '{"outcome": "swamped", "count": check.count}'
     )
     dropped = SPEC.replace(
-        '        check.count > 3: {"outcome": "busy", "count": check.count},\n', ""
+        '        (check.count > 3, {"outcome": "busy", "count": check.count}),\n', ""
     )
+    assert dropped != SPEC
     base = parse_source(SPEC, "a.aspec.py")
     codes = [c.code for c in diff_modules(base, parse_source(changed, "b.aspec.py"))]
     assert codes == ["derivation-row-changed"]

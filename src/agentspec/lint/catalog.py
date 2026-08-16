@@ -40,6 +40,7 @@ CATALOG: dict[str, tuple[str, str]] = {
     "AS046": ("step weakens an inherited must-rule", "error"),
     "AS047": ("irreversible op without undo", "warning"),
     "AS048": ("concurrent steps share a mutating op without exclusive", "warning"),
+    "AS049": ("derivation row can never match (duplicate condition)", "error"),
 }
 
 

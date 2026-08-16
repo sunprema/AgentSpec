@@ -15,7 +15,7 @@ notify step consumes route.outcome and fires on every terminal path.
 """
 
 from pydantic import BaseModel, Field
-from agentspec import Task, Tool, Enum, Retry, Rule
+from agentspec import Task, Tool, Enum, Retry, Rule, Cond
 
 DOCTRINE = [
     Rule(
@@ -322,15 +322,15 @@ class DepbotRun(Task):
         else None
     )
     cleanup = CleanupBranch(branch=apply.branch) if not tests.passed else None
-    route = {
-        not scan.ok: {"outcome": "scan_failed", "stopped_at": "scan"},
-        not scan.found: {"outcome": "no_updates", "stopped_at": "complete"},
-        not pick.selected: {"outcome": "no_updates", "stopped_at": "select"},
-        not apply.applied: {"outcome": "update_failed", "stopped_at": "apply"},
-        not tests.passed: {"outcome": "tests_failed", "stopped_at": "test"},
-        not pr.opened: {"outcome": "update_failed", "stopped_at": "publish"},
-        True: {"outcome": "pr_opened", "stopped_at": "complete"},
-    }
+    route = Cond(
+        (not scan.ok, {"outcome": "scan_failed", "stopped_at": "scan"}),
+        (not scan.found, {"outcome": "no_updates", "stopped_at": "complete"}),
+        (not pick.selected, {"outcome": "no_updates", "stopped_at": "select"}),
+        (not apply.applied, {"outcome": "update_failed", "stopped_at": "apply"}),
+        (not tests.passed, {"outcome": "tests_failed", "stopped_at": "test"}),
+        (not pr.opened, {"outcome": "update_failed", "stopped_at": "publish"}),
+        (True, {"outcome": "pr_opened", "stopped_at": "complete"}),
+    )
     notify = Notify(outcome=route.outcome, pr=pr, tests=tests)
 
     constraints = DOCTRINE + [

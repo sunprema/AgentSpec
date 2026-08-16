@@ -622,12 +622,20 @@ class _Parser:
                 task.meta = literal
             else:
                 self._diag("P008", "meta must be a literal dict", value)
-        elif isinstance(value, ast.Dict) and not all(
-            isinstance(k, ast.Constant) and isinstance(k.value, str) for k in value.keys
-        ):
+        elif isinstance(value, ast.Call) and self._callee(value) == "Cond":
             derivation = self._derivation_bind(name, value, stmt)
             if derivation is not None:
                 task.derivations.append(derivation)
+        elif isinstance(value, ast.Dict) and not all(
+            isinstance(k, ast.Constant) and isinstance(k.value, str) for k in value.keys
+        ):
+            self._diag(
+                "P015",
+                "the cond-dict derivation was replaced in spec 2.5 by "
+                "Cond((condition, {...}), ..., (True, {...})) — wrap each "
+                "`condition: output` row as a (condition, output) pair",
+                value,
+            )
         else:
             bind = self._bind(name, value, stmt)
             if bind is not None:
@@ -795,14 +803,22 @@ class _Parser:
         ast.In: "in",
     }
 
-    def _derivation_bind(self, var: str, node: ast.Dict, stmt: ast.Assign) -> DerivationBind | None:
-        """A cond-dict (spec 2.2): `{condition: {field: value}, ..., True: {...}}`,
-        first match wins top to bottom."""
+    def _derivation_bind(self, var: str, call: ast.Call, stmt: ast.Assign) -> DerivationBind | None:
+        """A Cond derivation (spec 2.5): ordered (condition, output) pairs,
+        first match wins top to bottom —
+        `Cond((cond, {field: value}), ..., (True, {...}))`."""
         rows = []
-        for key, value in zip(node.keys, node.values, strict=True):
-            if key is None:
-                self._diag("P015", "** expansion is not allowed in a derivation", node)
+        for kw in call.keywords:
+            self._diag("P015", "Cond takes only positional (condition, output) pairs", kw.value)
+        for arg in call.args:
+            if not (isinstance(arg, ast.Tuple) and len(arg.elts) == 2):
+                self._diag(
+                    "P015",
+                    "each Cond row must be a (condition, {field: value}) pair",
+                    arg,
+                )
                 continue
+            key, value = arg.elts
             atoms = self._condition_atoms(key)
             if atoms is None:
                 continue

@@ -2,7 +2,7 @@
 
 **A declarative specification language for autonomous AI routines.**
 
-Version 2.3 · File extension `.aspec.py`
+Version 2.5 · File extension `.aspec.py`
 
 ---
 
@@ -49,7 +49,7 @@ checkable like code, and versioned like code.
 Postmortems belong here — the spec is where operational lessons accumulate."""
 
 from pydantic import BaseModel, Field
-from agentspec import Task, Tool, Op, Rule, Enum, Retry, Escalate
+from agentspec import Task, Tool, Op, Rule, Cond, Enum, Retry, Escalate
 
 SHARED_RULES = [ ... ]        # module-level constants: rule lists, literals
 
@@ -263,35 +263,62 @@ class Routine(Task):
   runs.
 - **Types flow across binds** and are checked by tooling: producing field and
   consuming input must match (an `Enum` may widen safely into `str`).
-- **Derivations (the cond-dict).** A pipeline value computed mechanically —
-  no task call, no model judgment — from prior results:
+- **Derivations (`Cond`).** A pipeline value computed mechanically — no
+  task call, no model judgment — from prior results, as ordered
+  `(condition, output)` pairs:
 
   ```python
-  route = {
-      not workspace.resolved: {"outcome": "workspace_failed", "stopped_at": "resolve_workspace"},
-      build.validator_errors > 0: {"outcome": "published_with_errors",
-                                   "validator_errors": build.validator_errors},
-      True: {"outcome": "published_draft", "stopped_at": "complete"},
-  }
+  route = Cond(
+      (not workspace.resolved, {"outcome": "workspace_failed", "stopped_at": "resolve_workspace"}),
+      (build.validator_errors > 0, {"outcome": "published_with_errors",
+                                    "validator_errors": build.validator_errors}),
+      (True, {"outcome": "published_draft", "stopped_at": "complete"}),
+  )
   alert = PushAlert(..., outcome=route.outcome)
   ```
 
-  Rows match **first-match-wins, top to bottom**; `True:` is the mandatory
-  catch-all and must be last. Conditions use the same caged grammar as
-  gates and filters — a boolean path, `not path`, comparisons against
-  literals (`== != > >= < <= in [...]`) — joined by `and` only (split `or`
-  into separate rows). Row outputs are dicts of `field: literal-or-path`,
-  and every row declares the same field set. A derivation **always yields
-  a value**: skips do not propagate into or through it — a condition over a
-  skipped step's field is false, a copied value from a skipped step is
-  null. This is how a final join (an alerting step) can consume the routing
-  outcome and still run on every terminal path. The file is never executed,
-  so the dict's runtime meaning is irrelevant; these are the declared
-  semantics.
+  Rows match **first-match-wins, top to bottom**; `(True, {...})` is the
+  mandatory catch-all and must be last. Conditions use the same caged
+  grammar as gates and filters — a boolean path, `not path`, comparisons
+  against literals (`== != > >= < <= in [...]`) — joined by `and` only
+  (split `or` into separate rows). Row outputs are dicts of
+  `field: literal-or-path`, and every row declares the same field set.
+  A row whose condition repeats an earlier row's is dead and a lint
+  error. As everywhere in the language, the construct means in Python
+  what it declares: an ordered sequence, where duplicates and position
+  are legitimately meaningful.
 - **The orchestrator is the reducer.** After its steps, it synthesizes its
   own `returns` from the collected results. When the reduction is a routing
   decision, declare it as a derivation and copy its fields verbatim — the
   routing is mechanical; only genuinely prose outputs are model-authored.
+
+### Skips, None, and false
+
+The subtlest part of the pipeline is how a skipped step's absence flows.
+One rule set, stated once:
+
+1. **A false gate is a clean stop, never an error.** The gated step is
+   skipped, and so is everything that depends only on it.
+2. **`X | None` inputs absorb skips.** A consumer whose input is declared
+   optional still runs; the missing value arrives as null. Skips propagate
+   through *required* inputs only.
+3. **Derivations never skip.** A condition atom over a skipped step's
+   field is **false**; a copied value from a skipped step is **null**. A
+   derivation therefore always yields a value on every terminal path.
+4. **Gates over skipped producers are false** — both `cond` and
+   `not cond`: a skipped producer skips the gated step either way, because
+   negation applies to a value, and a skipped step has none.
+
+Worked example (BookBank): `plugin = VerifyPlugin() if workspace.resolved
+else None`, then `issue = SelectIssue(...) if plugin.usable else None`.
+When the workspace fails to resolve (its declared fallback returns
+`resolved=False`), the gate skips `plugin` (rule 1), so `plugin.usable`
+is false-over-skip (rule 4) and `issue` — and everything gated on it —
+skips too. The `route` derivation still fires (rule 3): the skipped
+plugin cannot match `not plugin.usable` (false-over-skip is not true),
+so the earlier `not workspace.resolved` row routes the run to
+`workspace_failed` — and the final `PushAlert`, whose inputs are all
+declared `X | None`, runs on this path as on every other (rule 2).
 
 ---
 
@@ -448,6 +475,17 @@ widened what the routine may do is an incident too — the expensive kind.
 
 ## 13. Version history
 
+- **2.5** — Derivations became `Cond((condition, {...}), ..., (True, {...}))`
+  — ordered pairs instead of the 2.2 cond-dict, which no longer parses
+  (migration is mechanical: wrap each `condition: output` row as a pair).
+  Motivation: the cond-dict was the one construct whose real-Python meaning
+  diverged from its declared semantics — as a dict, boolean keys collapse
+  and duplicate conditions collide silently; as a tuple sequence, order and
+  duplicates are legitimately meaningful, a duplicate row is a visible dead
+  row (lint error), and the strict ghost-Python invariant — every construct
+  means in Python what it declares — holds everywhere again. Also
+  consolidated the skip/None/false semantics into one §7 subsection with a
+  worked example.
 - **2.4** — The op risk lattice: `Op("name", risk=...)` places each tool op
   on `read → mutate → irreversible` (bare strings default to `mutate`, the
   conservative reading). Additive — no existing spec changes meaning.

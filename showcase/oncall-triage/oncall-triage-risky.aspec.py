@@ -21,7 +21,7 @@ pods, roll back the last deploy) so the on-call sleeps through the easy ones.
 """
 
 from pydantic import BaseModel, Field
-from agentspec import Task, Tool, Enum, Escalate, Rule
+from agentspec import Task, Tool, Enum, Escalate, Rule, Cond
 
 DOCTRINE = [
     Rule(
@@ -290,16 +290,19 @@ class OncallRun(Task):
     facts = ParseAlert(payload=payload)
     diag = GatherDiagnostics(service=facts.service) if facts.actionable else None
     hypo = FormHypothesis(facts=facts, diagnostics=diag) if diag.collected else None
-    triage = {
-        not facts.actionable: {"severity": "none", "page": False},
-        not diag.collected: {"severity": "sev2", "page": True},
-        facts.customer_facing and facts.env == "prod": {
-            "severity": "sev1",
-            "page": True,
-        },
-        hypo.confidence == "low": {"severity": "sev2", "page": True},
-        True: {"severity": "sev3", "page": False},
-    }
+    triage = Cond(
+        (not facts.actionable, {"severity": "none", "page": False}),
+        (not diag.collected, {"severity": "sev2", "page": True}),
+        (
+            facts.customer_facing and facts.env == "prod",
+            {
+                "severity": "sev1",
+                "page": True,
+            },
+        ),
+        (hypo.confidence == "low", {"severity": "sev2", "page": True}),
+        (True, {"severity": "sev3", "page": False}),
+    )
     page = (
         PageOncall(severity=triage.severity, statement=hypo.statement)
         if triage.page
@@ -310,13 +313,13 @@ class OncallRun(Task):
         if facts.actionable
         else None
     )
-    route = {
-        not facts.parsed: {"outcome": "triage_failed"},
-        not facts.actionable: {"outcome": "not_actionable"},
-        page.paged: {"outcome": "paged"},
-        ticket.filed: {"outcome": "ticketed"},
-        True: {"outcome": "triage_failed"},
-    }
+    route = Cond(
+        (not facts.parsed, {"outcome": "triage_failed"}),
+        (not facts.actionable, {"outcome": "not_actionable"}),
+        (page.paged, {"outcome": "paged"}),
+        (ticket.filed, {"outcome": "ticketed"}),
+        (True, {"outcome": "triage_failed"}),
+    )
 
     constraints = DOCTRINE + [
         Rule(
