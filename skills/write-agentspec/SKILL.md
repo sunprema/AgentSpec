@@ -67,6 +67,12 @@ route = Cond(                                         # derivation: mechanical
 )                                                     # is mandatory and last
 alert = Notify(outcome=route.outcome)                 # consumers reference it
 
+outcomes = [                                          # declared endings: name,
+    Outcome("failed", when=not check.ok, alert=True), # condition, report
+    Outcome("fine", when=True, alert=False),          # fields, and alerting in
+]                                                     # one construct; when=True
+page = Notify(...) if outcomes.alert else None        # catch-all is mandatory
+
 on_uncertain = {...literal matching returns...}   # the declared doubt path
 on_failure = "abort"                              # or a literal, Retry(...,
                                                   # then=...), Escalate(...)

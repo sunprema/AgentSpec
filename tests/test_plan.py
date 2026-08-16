@@ -23,7 +23,7 @@ def test_bookbank_waves(bookbank):
         ["issue"],
         ["mark"],
         ["build"],
-        ["art", "notify", "route"],
+        ["art", "notify", "outcomes"],
         ["alert"],
     ]
 
@@ -35,12 +35,12 @@ def test_bookbank_joins_and_deps(bookbank):
         "build",
         "issue",
         "notify",
+        "outcomes",
         "plugin",
-        "route",
         "workspace",
     ]
-    route = bookbank.step("route")
-    assert route.task == "<derived>" and route.gate is None
+    outcomes = bookbank.step("outcomes")
+    assert outcomes.task == "<derived>" and outcomes.gate is None
     assert bookbank.step("workspace").depends_on == []
 
 

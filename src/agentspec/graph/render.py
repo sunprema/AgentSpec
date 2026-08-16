@@ -66,7 +66,8 @@ def render_mermaid(module: SpecModule, task: TaskDef, *, failures: bool = False)
         lines.append(f"    {_node(bind.var)}{open_}{_esc(label)}{close}")
 
     for derivation in task.derivations:
-        lines.append(f'    {_node(derivation.var)}{{{{"{_esc(derivation.var)} = derived"}}}}')
+        label = "declared endings" if derivation.style == "outcomes" else "derived"
+        lines.append(f'    {_node(derivation.var)}{{{{"{_esc(derivation.var)} = {label}"}}}}')
         for dep in sorted(derivation.referenced_roots() & var_set):
             lines.append(f"    {_node(dep)} --> {_node(derivation.var)}")
 

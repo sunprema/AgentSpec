@@ -228,10 +228,15 @@ class DerivationRow(BaseModel):
 class DerivationBind(BaseModel):
     """A mechanically-evaluated pipeline value (spec 2.2): first row whose
     condition holds wins, top to bottom. Always yields a value — skips do
-    not propagate into or through a derivation."""
+    not propagate into or through a derivation.
+
+    style="outcomes" (spec 2.6): the bind was declared as a list of
+    Outcome(...) entries — a specialized derivation whose rows all carry
+    an `outcome` (the ending's name) and an `alert` (boolean) field."""
 
     var: str
     rows: list[DerivationRow] = Field(default_factory=list)
+    style: Literal["cond", "outcomes"] = "cond"
     raw: str
     loc: SourceLoc
 

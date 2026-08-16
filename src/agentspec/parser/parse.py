@@ -626,6 +626,14 @@ class _Parser:
             derivation = self._derivation_bind(name, value, stmt)
             if derivation is not None:
                 task.derivations.append(derivation)
+        elif (
+            isinstance(value, ast.List)
+            and value.elts
+            and any(isinstance(e, ast.Call) and self._callee(e) == "Outcome" for e in value.elts)
+        ):
+            outcomes = self._outcomes_bind(name, value, stmt)
+            if outcomes is not None:
+                task.derivations.append(outcomes)
         elif isinstance(value, ast.Dict) and not all(
             isinstance(k, ast.Constant) and isinstance(k.value, str) for k in value.keys
         ):
@@ -836,6 +844,86 @@ class _Parser:
         if not rows:
             return None
         return DerivationBind(var=var, rows=rows, raw=ast.unparse(stmt.value), loc=self._loc(stmt))
+
+    def _outcomes_bind(self, var: str, node: ast.List, stmt: ast.Assign) -> DerivationBind | None:
+        """Declared endings (spec 2.6): a list of
+        Outcome("name", when=<condition>, alert=<bool>, field=literal-or-path, ...)
+        entries — a specialized derivation whose rows all carry `outcome`
+        and `alert`. First matching `when` wins, top to bottom; the same
+        outcome name may appear on several rows (one ending, several ways
+        to reach it)."""
+        rows = []
+        for elt in node.elts:
+            if not (isinstance(elt, ast.Call) and self._callee(elt) == "Outcome"):
+                self._diag("P016", "every entry in an outcomes list must be an Outcome(...)", elt)
+                continue
+            row = self._outcome_row(elt)
+            if row is not None:
+                rows.append(row)
+        if not rows:
+            return None
+        return DerivationBind(
+            var=var,
+            rows=rows,
+            style="outcomes",
+            raw=ast.unparse(stmt.value),
+            loc=self._loc(stmt),
+        )
+
+    def _outcome_row(self, call: ast.Call) -> DerivationRow | None:
+        if len(call.args) != 1 or not (
+            isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str)
+        ):
+            self._diag(
+                "P016",
+                'Outcome takes exactly one positional argument: its name — Outcome("name", ...)',
+                call,
+            )
+            return None
+        name = call.args[0].value
+        atoms: list[DerivationAtom] | None = None
+        alert: bool | None = None
+        when_raw = ""
+        output: dict[str, ValueRef] = {
+            "outcome": ValueRef(kind="literal", value=name, raw=repr(name), loc=self._loc(call))
+        }
+        for kw in call.keywords:
+            if kw.arg == "when":
+                atoms = self._condition_atoms(kw.value)
+                if atoms is None:
+                    return None
+                when_raw = ast.unparse(kw.value)
+            elif kw.arg == "alert":
+                if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, bool):
+                    alert = kw.value.value
+                else:
+                    self._diag("P016", "Outcome alert must be True or False", kw.value)
+                    return None
+            elif kw.arg in ("outcome",) or kw.arg is None:
+                self._diag("P016", "the outcome name is the positional argument", kw.value)
+                return None
+            else:
+                output[kw.arg] = self._valueref(kw.value)
+        if atoms is None:
+            self._diag(
+                "P016",
+                f"Outcome '{name}' declares no when= condition (use when=True "
+                "for the catch-all ending)",
+                call,
+            )
+            return None
+        if alert is None:
+            self._diag(
+                "P016",
+                f"Outcome '{name}' declares no alert= — every ending states "
+                "whether a human hears about it",
+                call,
+            )
+            return None
+        output["alert"] = ValueRef(
+            kind="literal", value=alert, raw=repr(alert), loc=self._loc(call)
+        )
+        return DerivationRow(atoms=atoms, raw=when_raw, output=output, loc=self._loc(call))
 
     def _condition_atoms(self, node: ast.expr) -> list[DerivationAtom] | None:
         """The caged condition grammar: `True`, a path, `not path`,

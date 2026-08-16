@@ -2,7 +2,7 @@
 
 **A declarative specification language for autonomous AI routines.**
 
-Version 2.5 · File extension `.aspec.py`
+Version 2.6 · File extension `.aspec.py`
 
 ---
 
@@ -49,7 +49,7 @@ checkable like code, and versioned like code.
 Postmortems belong here — the spec is where operational lessons accumulate."""
 
 from pydantic import BaseModel, Field
-from agentspec import Task, Tool, Op, Rule, Cond, Enum, Retry, Escalate
+from agentspec import Task, Tool, Op, Rule, Cond, Outcome, Enum, Retry, Escalate
 
 SHARED_RULES = [ ... ]        # module-level constants: rule lists, literals
 
@@ -287,6 +287,36 @@ class Routine(Task):
   error. As everywhere in the language, the construct means in Python
   what it declares: an ordered sequence, where duplicates and position
   are legitimately meaningful.
+- **Outcomes (declared endings).** An unattended routine is a machine with
+  an enumerated set of endings. Declare them as one construct instead of
+  smearing the knowledge across a derivation and alerting rules:
+
+  ```python
+  outcomes = [
+      Outcome("workspace_failed", when=not workspace.resolved,
+              alert=True, stopped_at="resolve_workspace"),
+      Outcome("no_work", when=not issue.found,
+              alert=False, stopped_at="select_issue"),
+      Outcome("published_draft", when=True,
+              alert=False, stopped_at="complete"),
+  ]
+  alert = PushAlert(..., outcome=outcomes.outcome) if outcomes.alert else None
+  ```
+
+  Each `Outcome` names an ending, its `when=` condition (the caged
+  grammar; `when=True` is the mandatory catch-all, last), whether a human
+  hears about it (`alert=`, required — every ending states its alerting),
+  and any report fields (literal-or-path, same field set on every
+  ending). **An outcomes list is a specialized derivation**: rows match
+  first-match-wins, it always yields a value, and consumers reference
+  `outcomes.outcome`, `outcomes.alert`, and the report fields like any
+  derivation's. The same name may appear on several rows — one ending,
+  several ways to reach it. What lint now proves: every value of the
+  returns schema's `outcome` enum is reachable (or produced by
+  `on_uncertain`), every ending is explicitly alerted or silenced, no
+  ending is dead, and a gate on `outcomes.alert` is deterministic. The
+  reducer copies the matched outcome's fields verbatim (§7's reduction
+  rule); only prose fields are model-authored.
 - **The orchestrator is the reducer.** After its steps, it synthesizes its
   own `returns` from the collected results. When the reduction is a routing
   decision, declare it as a derivation and copy its fields verbatim — the
@@ -475,6 +505,15 @@ widened what the routine may do is an incident too — the expensive kind.
 
 ## 13. Version history
 
+- **2.6** — Declared endings: `outcomes = [Outcome("name", when=...,
+  alert=..., field=..., ...)]`, a specialized derivation carrying every
+  terminal state's name, condition, report fields, and alerting in one
+  reviewable construct. Earned under the two-failure rule: v2.1.1 of the
+  BookBank spec (the routing table drifted from its enum — an unreachable
+  ending) and the standing three-way split of ending knowledge across its
+  `route` derivation, `notify-conditions`, and `silent-conditions` rules,
+  which had to be kept consistent by hand. Lint now proves reachability
+  of every outcome enum value and explicit alert-or-silence per ending.
 - **2.5** — Derivations became `Cond((condition, {...}), ..., (True, {...}))`
   — ordered pairs instead of the 2.2 cond-dict, which no longer parses
   (migration is mechanical: wrap each `condition: output` row as a pair).

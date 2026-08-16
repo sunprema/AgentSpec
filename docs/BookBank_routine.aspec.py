@@ -28,10 +28,17 @@ v2.2.0 — the reduction mapping moved from prose into a `route` derivation
 (AgentSpec 2.2 cond-dict): routing is now declared and evaluated
 mechanically. PushAlert receives outcome as an input instead of re-deriving
 it; the derive-outcome-from-mapping rule and the prose table are gone.
+v2.3.0 — the route derivation became a declared `outcomes` list (AgentSpec
+2.6): every terminal state now names itself, its condition, its report
+fields, AND whether the operator hears about it (alert=). PushAlert
+receives alert_baseline from the matched Outcome; its notify/silent rules
+now carry only the conditions invisible at the outcome level. Lint proves
+every RunReport enum value reachable and every ending explicitly
+alerted-or-silenced.
 """
 
 from pydantic import BaseModel, Field
-from agentspec import Task, Tool, Enum, Retry, Rule, Cond
+from agentspec import Task, Tool, Enum, Retry, Rule, Outcome
 
 UNATTENDED = [
     Rule(
@@ -622,6 +629,7 @@ class PushAlert(Task):
     art: ImageRequests | None
     notify: IssueNote | None
     outcome: str
+    alert_baseline: bool
     returns: Alert
 
     tools = [Tool("push-notification")]
@@ -639,25 +647,23 @@ class PushAlert(Task):
         Rule(
             "notify-conditions",
             "NOTIFY when any of these hold: "
-            "outcome in ['workspace_failed', 'plugin_failed', "
-            "'generation_failed', 'uncertain']; "
-            "OR build.validator_errors > 0; "
+            "alert_baseline is True (the ending's declared alert flag); "
             "OR notify.commented is False; "
             "OR art.status == 'errored_noted'; "
             "OR build.cover_rendered is False OR build.visual_qa_ran is False; "
             "OR (plugin.registration_failed AND outcome in "
             "['published_draft', 'published_with_errors'])",
-            why="these are the states where a human's attention changes "
-            "the outcome. notify and art were previously invisible to "
-            "this task",
+            why="outcome-level alerting is declared per Outcome and arrives "
+            "as alert_baseline; the remaining conditions are degradations "
+            "invisible at the outcome level. notify and art were "
+            "previously invisible to this task",
             severity="must",
             since="v2.0.3(3)",
         ),
         Rule(
             "silent-conditions",
-            "STAY SILENT when outcome in ['no_work', "
-            "'already_in_progress'], or on a clean 'published_draft' with "
-            "no condition above set; record suppressed_reason instead",
+            "STAY SILENT when alert_baseline is False and no condition "
+            "above is set; record suppressed_reason instead",
             why="an empty queue is not news, a re-fire on a claimed issue is not news",
             severity="must",
         ),
@@ -715,72 +721,64 @@ class BookbankRun(Task):
         if build.built
         else None
     )
-    route = Cond(
-        (
-            not workspace.resolved,
-            {
-                "outcome": "workspace_failed",
-                "stopped_at": "resolve_workspace",
-                "validator_errors": 0,
-            },
+    outcomes = [
+        Outcome(
+            "workspace_failed",
+            when=not workspace.resolved,
+            alert=True,
+            stopped_at="resolve_workspace",
+            validator_errors=0,
         ),
-        (
-            not plugin.usable,
-            {
-                "outcome": "plugin_failed",
-                "stopped_at": "verify_plugin",
-                "validator_errors": 0,
-            },
+        Outcome(
+            "plugin_failed",
+            when=not plugin.usable,
+            alert=True,
+            stopped_at="verify_plugin",
+            validator_errors=0,
         ),
-        (
-            not issue.found,
-            {
-                "outcome": "no_work",
-                "stopped_at": "select_issue",
-                "validator_errors": 0,
-            },
+        Outcome(
+            "no_work",
+            when=not issue.found,
+            alert=False,
+            stopped_at="select_issue",
+            validator_errors=0,
         ),
-        (
-            issue.already_in_progress and not issue.redo_requested,
-            {
-                "outcome": "already_in_progress",
-                "stopped_at": "select_issue",
-                "validator_errors": 0,
-            },
+        Outcome(
+            "already_in_progress",
+            when=issue.already_in_progress and not issue.redo_requested,
+            alert=False,
+            stopped_at="select_issue",
+            validator_errors=0,
         ),
-        (
-            not mark.marked,
-            {
-                "outcome": "generation_failed",
-                "stopped_at": "mark_started",
-                "validator_errors": 0,
-            },
+        Outcome(
+            "generation_failed",
+            when=not mark.marked,
+            alert=True,
+            stopped_at="mark_started",
+            validator_errors=0,
         ),
-        (
-            not build.built,
-            {
-                "outcome": "generation_failed",
-                "stopped_at": "generate_book",
-                "validator_errors": 0,
-            },
+        Outcome(
+            "generation_failed",
+            when=not build.built,
+            alert=True,
+            stopped_at="generate_book",
+            validator_errors=0,
         ),
-        (
-            build.validator_errors > 0,
-            {
-                "outcome": "published_with_errors",
-                "stopped_at": "complete",
-                "validator_errors": build.validator_errors,
-            },
+        Outcome(
+            "published_with_errors",
+            when=build.validator_errors > 0,
+            alert=True,
+            stopped_at="complete",
+            validator_errors=build.validator_errors,
         ),
-        (
-            True,
-            {
-                "outcome": "published_draft",
-                "stopped_at": "complete",
-                "validator_errors": 0,
-            },
+        Outcome(
+            "published_draft",
+            when=True,
+            alert=False,
+            stopped_at="complete",
+            validator_errors=0,
         ),
-    )
+    ]
     alert = PushAlert(
         workspace=workspace,
         plugin=plugin,
@@ -788,7 +786,8 @@ class BookbankRun(Task):
         build=build,
         art=art,
         notify=notify,
-        outcome=route.outcome,
+        outcome=outcomes.outcome,
+        alert_baseline=outcomes.alert,
     )
 
     constraints = UNATTENDED + [
@@ -808,14 +807,14 @@ class BookbankRun(Task):
             severity="must",
         ),
         Rule(
-            "reduce-from-route",
-            "Reduce to RunReport by copying route.outcome, route.stopped_at, "
-            "and route.validator_errors verbatim, then authoring summary and "
-            "operator_action",
-            why="the routing decision is declared in the route derivation and "
-            "evaluated mechanically; only the prose fields are judgment",
+            "reduce-from-outcomes",
+            "Reduce to RunReport by copying outcomes.outcome, "
+            "outcomes.stopped_at, and outcomes.validator_errors verbatim, "
+            "then authoring summary and operator_action",
+            why="the routine's endings are declared in the outcomes list and "
+            "matched mechanically; only the prose fields are judgment",
             severity="must",
-            since="v2.2.0",
+            since="v2.3.0",
         ),
         Rule(
             "alert-on-every-path",
@@ -863,4 +862,4 @@ class BookbankRun(Task):
         "operator_action": "Inspect the run transcript before re-dispatching.",
     }
     on_failure = "abort"
-    meta = {"version": "2.2.0", "dispatch": "manual|webhook", "repo": "sunprema/books"}
+    meta = {"version": "2.3.0", "dispatch": "manual|webhook", "repo": "sunprema/books"}

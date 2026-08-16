@@ -48,10 +48,10 @@ def test_payload_pipeline_waves(bookbank_payload):
     pipe = bookbank_payload["pipeline"]
     assert pipe["orchestrator"] == "BookbankRun"
     assert len(pipe["waves"]) == 7
-    assert sorted(pipe["waves"][5]) == ["art", "notify", "route"]
+    assert sorted(pipe["waves"][5]) == ["art", "notify", "outcomes"]
     assert pipe["waves"][6] == ["alert"]
-    route = next(s for s in pipe["steps"] if s["var"] == "route")
-    assert route["task"] == "<derived>" and route["needs"] == []
+    outcomes = next(s for s in pipe["steps"] if s["var"] == "outcomes")
+    assert outcomes["task"] == "<derived>" and outcomes["needs"] == []
     assert pipe["inputs"] == ["freeform_context"]
 
 
@@ -184,8 +184,8 @@ def test_cli_studio_missing_file(capsys):
 def test_payload_reduction_table(bookbank_payload):
     table = bookbank_payload["pipeline"]["reduction"]
     assert table["source"] == "derivation"
-    assert table["name"] == "route"
-    assert table["fields"] == ["outcome", "stopped_at", "validator_errors"]
+    assert table["name"] == "outcomes"
+    assert table["fields"] == ["alert", "outcome", "stopped_at", "validator_errors"]
     assert len(table["rows"]) == 8
     assert table["rows"][-1]["condition"] == "otherwise"
     assert table["rows"][0]["values"]["outcome"] == "workspace_failed"
