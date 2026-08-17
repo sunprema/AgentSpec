@@ -50,6 +50,9 @@ main{flex:1;display:flex;min-height:0}
 #inspector.on,#issues.on{display:block}
 #inspector h2{font-size:15px;margin-bottom:2px}
 #inspector h2 .task{color:var(--accent)}
+#inspector h2 .task.link{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
+#inspector h2 .task.link:hover{color:#a8ccff}
+#inspector h2 .task.link:after{content:" ↗";font-size:11px;color:var(--dim)}
 #inspector .doc{font-size:13px;color:var(--text);opacity:.9;margin:8px 0 12px;line-height:1.5}
 #inspector h3{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--dim);margin:16px 0 6px}
 .kv{font:12px var(--mono);line-height:1.7}
@@ -111,6 +114,8 @@ svg text{font-family:var(--sans);user-select:none}
 .tchip.aborted{background:#3a1d24;color:#f2a7ae}
 .node .var{fill:var(--text);font-size:13px;font-weight:600}
 .node .task{fill:var(--dim);font-size:11px}
+.node text.task[data-def]{cursor:pointer}
+.node text.task[data-def]:hover{fill:var(--accent);text-decoration:underline}
 .node .chips{fill:var(--dim);font:9.5px var(--mono)}
 .node.inputs rect.box{fill:#182338;stroke-dasharray:4 3}
 .badge{font:9.5px var(--mono)}
@@ -227,6 +232,22 @@ function renderSource(){
   panel.innerHTML=S.src.split("\n").map((l,i)=>
     `<div class="srcline" data-l="${i+1}"><span class="ln">${i+1}</span><span class="cd">${esc(l)||" "}</span></div>`).join("");
 }
+function taskDefLine(name){
+  // the class-definition line of a task, only when it lives in THIS file —
+  // an imported task's line points into a sibling spec
+  const t=S.data?.tasks[name];
+  if(!t||!t.line||S.src==null) return null;
+  const txt=S.src.split("\n")[t.line-1]||"";
+  return txt.includes("class "+name)?t.line:null;
+}
+function jumpToDef(name){
+  const line=taskDefLine(name);
+  if(!line) return;
+  if(!$("srcpanel").classList.contains("on")){
+    $("srcpanel").classList.add("on");$("srctgl").classList.add("on");
+  }
+  syncSource(line);
+}
 function syncSource(line,scroll=true){
   // line: explicit target (issue clicks); otherwise derived from S.sel —
   // primary = the step's bind in the orchestrator, secondary = its task class
@@ -324,10 +345,11 @@ function renderCanvas(){
       const rec=(S.trace.steps||[]).find(x=>x.var===v);
       if(rec) cls+=` t-${rec.status}`;
     }
+    const defAttr=d.tasks[st.task]?` data-def="${esc(st.task)}"`:"";
     let g=`<g class="${cls}" data-node="${esc(v)}">
       <rect class="box" x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}"/>
       <text class="var" x="${p.x+12}" y="${p.y+21}">${esc(v)}</text>
-      <text class="task" x="${p.x+12}" y="${p.y+37}">${esc(st.task)}${st.fanout_over?"  ×N":""}${st.serialized?" (serialized)":""}</text>`;
+      <text class="task" x="${p.x+12}" y="${p.y+37}"${defAttr}>${esc(st.task)}${st.fanout_over?"  ×N":""}${st.serialized?" (serialized)":""}${defAttr?"<title>view the Task definition in source</title>":""}</text>`;
     // badges
     let bx=p.x+12, by=p.y+51;
     const badge=(txt,color)=>{const w=txt.length*5.6+10;
@@ -352,6 +374,17 @@ function renderCanvas(){
   svg.innerHTML=out;
 
   svg.querySelectorAll(".node").forEach(n=>n.addEventListener("click",()=>{S.sel=n.dataset.node;renderAll();syncSource();}));
+  // the task label (or a double-click anywhere on the node) opens the Task
+  // class definition; a plain click keeps meaning "the bind in the pipeline"
+  svg.querySelectorAll("text.task[data-def]").forEach(t=>t.addEventListener("click",ev=>{
+    ev.stopPropagation();
+    S.sel=t.closest(".node").dataset.node;renderAll();
+    jumpToDef(t.dataset.def);
+  }));
+  svg.querySelectorAll(".node").forEach(n=>n.addEventListener("dblclick",()=>{
+    const st=P.steps.find(s=>s.var===n.dataset.node);
+    if(st) jumpToDef(st.task);
+  }));
   svg.querySelectorAll(".edge-hit").forEach(h=>{
     h.addEventListener("mousemove",ev=>showEdgeTip(ev,h.dataset.edge));
     h.addEventListener("mouseleave",hideTip);
@@ -430,7 +463,9 @@ function renderInspector(){
   const taskName=st?st.task:(d.tasks[S.sel]?S.sel:null);
   if(!taskName){el.innerHTML=`<div class="muted">Click a step on the canvas.</div>`;return;}
   const t=d.tasks[taskName];
-  let h=`<h2>${st?esc(st.var)+" = ":""}<span class="task">${esc(taskName)}</span></h2>`;
+  const linkable=taskDefLine(taskName)!=null;
+  let h=`<h2>${st?esc(st.var)+" = ":""}<span class="task${linkable?" link":""}" id="defjump" `+
+    `data-def="${esc(taskName)}"${linkable?' title="view the Task definition in source"':""}>${esc(taskName)}</span></h2>`;
   if(st&&!window.EMBEDDED_SPEC){
     const pinned=st.var in S.pins;
     h+=`<div style="margin:8px 0"><button class="pinbtn ${pinned?"on":""}" id="pinbtn">${pinned?"📌 pinned — click to unpin":"📌 pin for the agent"}</button></div>`;
@@ -467,6 +502,9 @@ function renderInspector(){
   if(t.meta) h+=`<h3>meta</h3><div class="kv"><span class="t">${esc(JSON.stringify(t.meta))}</span></div>`;
   el.innerHTML=h;
 
+  const defjump=$("defjump");
+  if(defjump&&defjump.classList.contains("link"))
+    defjump.addEventListener("click",()=>jumpToDef(defjump.dataset.def));
   const pinbtn=$("pinbtn");
   if(pinbtn&&st){
     pinbtn.addEventListener("click",async()=>{
