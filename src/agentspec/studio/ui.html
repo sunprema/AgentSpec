@@ -31,17 +31,21 @@ header .logo span{color:var(--accent)}
 #simbar label.off{color:var(--err)}
 #simbar button{font:11px var(--sans);background:none;border:1px solid var(--line);color:var(--dim);border-radius:5px;padding:2px 8px;cursor:pointer}
 main{flex:1;display:flex;min-height:0}
-#srcpanel{width:430px;min-width:260px;border-right:1px solid var(--line);background:var(--panel);overflow:auto;display:none;font:12px var(--mono);line-height:1.55;padding:8px 0}
+#srcpanel{width:430px;min-width:200px;border-right:1px solid var(--line);background:var(--panel);overflow:auto;display:none;font:12px var(--mono);line-height:1.55;padding:8px 0}
 #srcpanel.on{display:block}
 #srcpanel .srcline{display:flex;white-space:pre}
 #srcpanel .srcline .ln{color:#3d4a68;text-align:right;min-width:44px;padding-right:10px;user-select:none;flex:none}
 #srcpanel .srcline .cd{color:var(--text);padding-right:14px}
 #srcpanel .srcline.hl{background:#1d2a45;box-shadow:inset 3px 0 0 var(--accent)}
 #srcpanel .srcline.hl2{background:#171f33;box-shadow:inset 3px 0 0 var(--violet)}
-#canvasWrap{flex:1;overflow:auto;position:relative;text-align:center}
+#canvasWrap{flex:1;overflow:auto;position:relative;text-align:center;min-width:220px}
 #canvas{display:inline-block}
 #empty{color:var(--dim);padding:40px;font-size:14px}
-#side{width:400px;min-width:300px;border-left:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column}
+#side{width:400px;min-width:200px;border-left:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column}
+#side.off{display:none}
+.drag{width:5px;flex:none;cursor:col-resize;background:transparent}
+.drag:hover,.drag.active{background:var(--accent);opacity:.55}
+.drag.off,#srcpanel:not(.on)+.drag{display:none}
 #tabs{display:flex;border-bottom:1px solid var(--line)}
 #tabs .tab{flex:1;text-align:center;padding:9px;font-size:13px;color:var(--dim);cursor:pointer;border-bottom:2px solid transparent}
 #tabs .tab.on{color:var(--text);border-bottom-color:var(--accent)}
@@ -135,6 +139,7 @@ svg text{font-family:var(--sans);user-select:none}
   <div class="spacer"></div>
   <div class="toggles">
     <div class="tgl on" id="srctgl">Source</div>
+    <div class="tgl on" id="sidetgl">Inspector</div>
     <div class="tgl on" data-layer="gates">Gates</div>
     <div class="tgl on" data-layer="failure">Failure</div>
     <div class="tgl" data-layer="tools">Tools</div>
@@ -151,7 +156,9 @@ svg text{font-family:var(--sans);user-select:none}
 </div>
 <main>
   <div id="srcpanel" class="on"><div class="muted" style="padding:12px">waiting for the spec source…</div></div>
+  <div id="srcdrag" class="drag" title="drag to resize · double-click to reset"></div>
   <div id="canvasWrap"><div id="empty">waiting for a parsed spec…</div><svg id="canvas"></svg></div>
+  <div id="sidedrag" class="drag" title="drag to resize · double-click to reset"></div>
   <div id="side">
     <div id="tabs">
       <div class="tab on" data-tab="inspector">Inspector</div>
@@ -564,6 +571,34 @@ $("srctgl").addEventListener("click",()=>{
   $("srctgl").classList.toggle("on",on);
   if(on) syncSource();
 });
+$("sidetgl").addEventListener("click",()=>{
+  const off=$("side").classList.toggle("off");
+  $("sidedrag").classList.toggle("off",off);
+  $("sidetgl").classList.toggle("on",!off);
+});
+// panel resizing: drag the splitter; double-click resets to the default width
+function wireDrag(handle,panel,panelOnLeft){
+  handle.addEventListener("mousedown",e=>{
+    e.preventDefault();
+    const startX=e.clientX, startW=panel.getBoundingClientRect().width;
+    handle.classList.add("active");
+    document.body.style.userSelect="none";
+    const move=ev=>{
+      const dx=ev.clientX-startX;
+      const w=Math.min(Math.max(200,startW+(panelOnLeft?dx:-dx)),innerWidth*0.7);
+      panel.style.width=w+"px";
+    };
+    const up=()=>{
+      removeEventListener("mousemove",move);removeEventListener("mouseup",up);
+      handle.classList.remove("active");
+      document.body.style.userSelect="";
+    };
+    addEventListener("mousemove",move);addEventListener("mouseup",up);
+  });
+  handle.addEventListener("dblclick",()=>{panel.style.width="";});
+}
+wireDrag($("srcdrag"),$("srcpanel"),true);
+wireDrag($("sidedrag"),$("side"),false);
 $("simreset").addEventListener("click",()=>{for(const k in S.gateVals)S.gateVals[k]=true;computeSkips();renderAll();});
 document.querySelectorAll("#tabs .tab").forEach(t=>t.addEventListener("click",()=>{
   document.querySelectorAll("#tabs .tab").forEach(x=>x.classList.toggle("on",x===t));
