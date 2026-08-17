@@ -251,7 +251,7 @@ function jumpToDef(name){
   const line=taskDefLine(name);
   if(!line) return;
   if(!$("srcpanel").classList.contains("on")){
-    $("srcpanel").classList.add("on");$("srctgl").classList.add("on");
+    $("srcpanel").classList.add("on");$("srctgl").classList.add("on");saveLayout();
   }
   syncSource(line);
 }
@@ -566,15 +566,37 @@ document.querySelectorAll(".tgl[data-layer]").forEach(t=>t.addEventListener("cli
   const l=t.dataset.layer; S.layers[l]=!S.layers[l]; t.classList.toggle("on",S.layers[l]); renderCanvas();
 }));
 $("simtgl").addEventListener("click",()=>{S.sim=!S.sim;computeSkips();renderAll();});
+// layout persistence: panel widths and visibility survive a refresh
+const LAYOUT_KEY="aspec-studio-layout";
+function saveLayout(){
+  try{localStorage.setItem(LAYOUT_KEY,JSON.stringify({
+    srcW:$("srcpanel").style.width||null,
+    sideW:$("side").style.width||null,
+    srcOn:$("srcpanel").classList.contains("on"),
+    sideOn:!$("side").classList.contains("off"),
+  }));}catch(e){/* storage unavailable: layout stays session-only */}
+}
+function loadLayout(){
+  try{
+    const l=JSON.parse(localStorage.getItem(LAYOUT_KEY)||"null");
+    if(!l) return;
+    if(l.srcW) $("srcpanel").style.width=l.srcW;
+    if(l.sideW) $("side").style.width=l.sideW;
+    if(l.srcOn===false){$("srcpanel").classList.remove("on");$("srctgl").classList.remove("on");}
+    if(l.sideOn===false){$("side").classList.add("off");$("sidedrag").classList.add("off");$("sidetgl").classList.remove("on");}
+  }catch(e){/* corrupt or unavailable: fall back to defaults */}
+}
 $("srctgl").addEventListener("click",()=>{
   const on=$("srcpanel").classList.toggle("on");
   $("srctgl").classList.toggle("on",on);
   if(on) syncSource();
+  saveLayout();
 });
 $("sidetgl").addEventListener("click",()=>{
   const off=$("side").classList.toggle("off");
   $("sidedrag").classList.toggle("off",off);
   $("sidetgl").classList.toggle("on",!off);
+  saveLayout();
 });
 // panel resizing: drag the splitter; double-click resets to the default width
 function wireDrag(handle,panel,panelOnLeft){
@@ -592,10 +614,11 @@ function wireDrag(handle,panel,panelOnLeft){
       removeEventListener("mousemove",move);removeEventListener("mouseup",up);
       handle.classList.remove("active");
       document.body.style.userSelect="";
+      saveLayout();
     };
     addEventListener("mousemove",move);addEventListener("mouseup",up);
   });
-  handle.addEventListener("dblclick",()=>{panel.style.width="";});
+  handle.addEventListener("dblclick",()=>{panel.style.width="";saveLayout();});
 }
 wireDrag($("srcdrag"),$("srcpanel"),true);
 wireDrag($("sidedrag"),$("side"),false);
@@ -616,6 +639,7 @@ document.querySelectorAll("#tabs .tab").forEach(t=>t.addEventListener("click",()
   if(h.get("off")) for(const v of h.get("off").split(",")) S.gateVals[v]=false;
   if(h.get("sel")) S.sel=h.get("sel");
 })();
+loadLayout();
 poll();
 </script>
 </body>
