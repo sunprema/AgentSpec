@@ -2,6 +2,14 @@
 the loop for reads. See plan/visual-tooling.md item 1."""
 
 from agentspec.studio.payload import build_payload
+from agentspec.studio.prompt import render_task_prompt
 from agentspec.studio.server import StudioState, create_server, export_html, serve
 
-__all__ = ["StudioState", "build_payload", "create_server", "export_html", "serve"]
+__all__ = [
+    "StudioState",
+    "build_payload",
+    "create_server",
+    "export_html",
+    "render_task_prompt",
+    "serve",
+]

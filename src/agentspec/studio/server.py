@@ -3,6 +3,9 @@
 GET  /           the packaged single-file UI
 GET  /api/spec   {"version", "file", "errors", "payload", "trace",
                   "pins", "highlight", "source"}
+GET  /api/prompt?task=<name>&dev=<0|1>   the guarded prompt that task would
+                 receive (spec §9's pruned contract); example inputs, or
+                 recorded trace output where a loaded --trace covers it
 POST /api/pin    {"var": "build", "pinned": true}
 POST /api/note   {"var": "build", "note": "..."}
 POST /mcp        JSON-RPC: get_spec, get_pinned, highlight_node — so a
@@ -26,9 +29,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from agentspec.parser import parse_file
 from agentspec.studio.payload import build_payload
+from agentspec.studio.prompt import render_task_prompt
 
 WATCH_INTERVAL_S = 1.0
 
@@ -243,8 +248,40 @@ def _make_handler(state: StudioState) -> type[BaseHTTPRequestHandler]:
                 self._send(200, _ui_html(), "text/html; charset=utf-8")
             elif self.path.startswith("/api/spec"):
                 self._json(state.snapshot())
+            elif self.path.startswith("/api/prompt"):
+                self._prompt()
             else:
                 self._json({"error": "not found"}, 404)
+
+        def _prompt(self) -> None:
+            qs = parse_qs(urlparse(self.path).query)
+            task_name = (qs.get("task") or [""])[0]
+            dev_mode = (qs.get("dev") or ["0"])[0] == "1"
+            if not task_name:
+                self._json({"error": "missing 'task' query parameter"}, 400)
+                return
+            module = parse_file(state.path, cache={})
+            if module.errors:
+                self._json({"error": "spec has parse errors; fix them and retry"}, 409)
+                return
+            if task_name not in module.tasks:
+                self._json({"error": f"no such task '{task_name}'"}, 404)
+                return
+            try:
+                prompt, used_trace = render_task_prompt(
+                    module, task_name, dev_mode=dev_mode, trace=state.snapshot()["trace"]
+                )
+            except ValueError as exc:
+                self._json({"error": str(exc)}, 400)
+                return
+            self._json(
+                {
+                    "task": task_name,
+                    "dev_mode": dev_mode,
+                    "used_trace": used_trace,
+                    "prompt": prompt,
+                }
+            )
 
         def do_POST(self) -> None:  # noqa: N802
             body = self._body()

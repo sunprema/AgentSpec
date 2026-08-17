@@ -50,8 +50,12 @@ main{flex:1;display:flex;min-height:0}
 #tabs .tab{flex:1;text-align:center;padding:9px;font-size:13px;color:var(--dim);cursor:pointer;border-bottom:2px solid transparent}
 #tabs .tab.on{color:var(--text);border-bottom-color:var(--accent)}
 #tabs .tab .cnt{font:11px var(--mono);background:var(--panel2);border-radius:8px;padding:1px 6px;margin-left:4px}
-#inspector,#issues{flex:1;overflow:auto;padding:14px;display:none}
-#inspector.on,#issues.on{display:block}
+#inspector,#issues,#prompt{flex:1;overflow:auto;padding:14px;display:none}
+#inspector.on,#issues.on,#prompt.on{display:block}
+#prompt .promptbar{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+#prompt .promptbar label{display:inline-flex;align-items:center;gap:5px;font:12px var(--mono);color:var(--dim);cursor:pointer}
+#prompt .note{font:11px var(--mono);color:var(--dim);margin-bottom:8px}
+#promptbox{font:11.5px var(--mono);line-height:1.55;white-space:pre-wrap;word-break:break-word;background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:10px}
 #inspector h2{font-size:15px;margin-bottom:2px}
 #inspector h2 .task{color:var(--accent)}
 #inspector h2 .task.link{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
@@ -163,9 +167,11 @@ svg text{font-family:var(--sans);user-select:none}
     <div id="tabs">
       <div class="tab on" data-tab="inspector">Inspector</div>
       <div class="tab" data-tab="issues">Issues<span class="cnt" id="issuecnt">0</span></div>
+      <div class="tab" data-tab="prompt">Prompt</div>
     </div>
     <div id="inspector" class="on"><div class="muted">Click a step on the canvas.</div></div>
     <div id="issues"></div>
+    <div id="prompt"><div class="muted">Click a step on the canvas.</div></div>
   </div>
 </main>
 <div id="tip"></div>
@@ -173,7 +179,8 @@ svg text{font-family:var(--sans);user-select:none}
 "use strict";
 const $=id=>document.getElementById(id);
 const S={version:-1,data:null,src:null,sel:null,layers:{gates:true,failure:true,tools:false,waves:false,trace:false},
-         sim:false,gateVals:{},skipped:new Set(),trace:null,pins:{},traceSeen:false};
+         sim:false,gateVals:{},skipped:new Set(),trace:null,pins:{},traceSeen:false,
+         promptDev:false,promptFor:null,promptText:null,promptErr:null,promptBusy:false};
 
 const NW=190, NH=58, GX=46, GY=64, PAD=40;
 
@@ -230,7 +237,67 @@ function onData(){
   syncSource(null,false);  // restore the highlight without stealing scroll
 }
 
-function renderAll(){renderCanvas();renderSimBar();renderIssues();renderInspector();}
+function renderAll(){renderCanvas();renderSimBar();renderIssues();renderInspector();renderPrompt();}
+
+function selectedTaskName(){
+  const d=S.data;
+  if(!d||!S.sel||S.sel==="_inputs") return null;
+  const st=d.pipeline?.steps.find(s=>s.var===S.sel);
+  if(st&&st.task==="<derived>") return null;
+  return st?st.task:(d.tasks[S.sel]?S.sel:null);
+}
+
+// ---------- prompt preview ----------
+async function renderPrompt(){
+  const el=$("prompt");
+  if(!el.classList.contains("on")) return;  // fetch only while this tab is actually open
+  if(!S.data){el.innerHTML="";return;}
+  const taskName=selectedTaskName();
+  if(!taskName){el.innerHTML=`<div class="muted">Click a step on the canvas.</div>`;S.promptFor=null;return;}
+  const t=S.data.tasks[taskName];
+  if(t&&t.is_orchestrator){
+    el.innerHTML=`<div class="muted">${esc(taskName)} is the orchestrator — its reducer prompt `+
+      `combines every step's collected results, not previewable here.</div>`;
+    S.promptFor=null;
+    return;
+  }
+  if(window.EMBEDDED_SPEC){
+    el.innerHTML=`<div class="muted">Prompt preview needs a live studio server — not available in a static export.</div>`;
+    S.promptFor=null;
+    return;
+  }
+  const bar=`<div class="promptbar">`+
+    `<label><input type="checkbox" id="promptdev" ${S.promptDev?"checked":""}> dev mode (allow one clarifying question)</label>`+
+    `<span class="tgl" id="promptrefresh" style="cursor:pointer">refresh</span></div>`;
+  const key=taskName+":"+(S.promptDev?"1":"0");
+  if(S.promptFor!==key&&!S.promptBusy){S.promptBusy=true;fetchPrompt(taskName,key);}
+  if(S.promptFor!==key||S.promptBusy){
+    el.innerHTML=bar+`<div class="muted">rendering…</div>`;
+  }else if(S.promptErr){
+    el.innerHTML=bar+`<div class="muted">${esc(S.promptErr)}</div>`;
+  }else{
+    const note=S.promptUsedTrace
+      ?"Some values were taken from the loaded trace; the rest are synthesized examples."
+      :"Example inputs synthesized from the declared types — not a live run.";
+    el.innerHTML=bar+`<div class="note">${esc(note)}</div><pre id="promptbox">${esc(S.promptText)}</pre>`;
+  }
+  const chk=$("promptdev");
+  if(chk) chk.addEventListener("change",()=>{S.promptDev=chk.checked;S.promptFor=null;renderPrompt();});
+  const ref=$("promptrefresh");
+  if(ref) ref.addEventListener("click",()=>{S.promptFor=null;renderPrompt();});
+}
+
+async function fetchPrompt(taskName,key){
+  try{
+    const res=await fetch(`/api/prompt?task=${encodeURIComponent(taskName)}&dev=${S.promptDev?1:0}`);
+    const body=await res.json();
+    if(!res.ok){S.promptErr=body.error||"failed to render prompt";S.promptText=null;}
+    else{S.promptText=body.prompt;S.promptErr=null;S.promptUsedTrace=body.used_trace;}
+  }catch(e){S.promptErr=String(e);S.promptText=null;}
+  S.promptBusy=false;
+  S.promptFor=key;
+  renderPrompt();
+}
 
 // ---------- source panel ----------
 function renderSource(){
@@ -627,6 +694,8 @@ document.querySelectorAll("#tabs .tab").forEach(t=>t.addEventListener("click",()
   document.querySelectorAll("#tabs .tab").forEach(x=>x.classList.toggle("on",x===t));
   $("inspector").classList.toggle("on",t.dataset.tab==="inspector");
   $("issues").classList.toggle("on",t.dataset.tab==="issues");
+  $("prompt").classList.toggle("on",t.dataset.tab==="prompt");
+  if(t.dataset.tab==="prompt") renderPrompt();
 }));
 // shareable view state: #layers=tools,waves&sim=1&off=mark&sel=build
 (function initFromHash(){

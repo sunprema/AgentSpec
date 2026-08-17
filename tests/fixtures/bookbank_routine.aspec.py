@@ -35,10 +35,25 @@ receives alert_baseline from the matched Outcome; its notify/silent rules
 now carry only the conditions invisible at the outcome level. Lint proves
 every RunReport enum value reachable and every ending explicitly
 alerted-or-silenced.
+v2.4.0 — adopted the op risk lattice (AgentSpec spec 2.4): read-only ops
+(`ls`, `git remote`, `git rev-parse`, `issue list`, `issue view`,
+`branch list`, `claude plugin list`) tagged `Op(risk="read")`; `git push`
+tagged `Op("push", risk="irreversible")`, matching the spec's own §6
+example. Also: GenerateBook decomposed into GenerateBook (generate, verify,
+and commit locally — nothing leaves the machine) and PublishBook (push the
+branch and open the PR), resolving the AS031 warning plan/toolchain.md had
+pinned since the toolchain's first dogfooding pass ("the fix is a
+spec-author decision (decompose GenerateBook)"). Each task's declared tools
+now match only what it does — GenerateBook no longer needs `gh`. art and
+notify now gate on `publish.published` rather than local `build.built`:
+the image-request Action commits onto a branch that must actually be live
+on the remote, which build.built alone never guaranteed. A new
+`publish_book` stopped_at / generation_failed outcome row gives a push/PR
+failure its own alerted ending instead of folding it into generate_book's.
 """
 
 from pydantic import BaseModel, Field
-from agentspec import Task, Tool, Enum, Retry, Rule, Outcome
+from agentspec import Task, Tool, Op, Enum, Retry, Rule, Outcome
 
 UNATTENDED = [
     Rule(
@@ -105,6 +120,10 @@ class BookBuild(BaseModel):
     validator_errors: int = Field(ge=0)
     cover_rendered: bool
     visual_qa_ran: bool
+
+
+class PublishResult(BaseModel):
+    published: bool
     pr_url: str
 
 
@@ -139,6 +158,7 @@ class RunReport(BaseModel):
         "select_issue",
         "mark_started",
         "generate_book",
+        "publish_book",
         "complete",
     ]
     validator_errors: int = Field(ge=0)
@@ -152,7 +172,18 @@ class ResolveWorkspace(Task):
 
     returns: Workspace
 
-    tools = [Tool("bash", ops=["ls", "cd", "git remote", "git rev-parse", "git clone"])]
+    tools = [
+        Tool(
+            "bash",
+            ops=[
+                Op("ls", risk="read"),
+                "cd",
+                Op("git remote", risk="read"),
+                Op("git rev-parse", risk="read"),
+                "git clone",
+            ],
+        )
+    ]
     constraints = UNATTENDED + [
         Rule(
             "cwd-is-the-config",
@@ -208,8 +239,8 @@ class VerifyPlugin(Task):
             ops=[
                 "claude plugin marketplace add",
                 "claude plugin install",
-                "claude plugin list",
-                "ls",
+                Op("claude plugin list", risk="read"),
+                Op("ls", risk="read"),
             ],
         ),
         Tool("read", paths=["<plugin_root>/skills/**", "<plugin_root>/library/**"]),
@@ -303,7 +334,16 @@ class SelectIssue(Task):
     repo_slug: str
     returns: IssueRef
 
-    tools = [Tool("gh", ops=["issue list", "issue view", "branch list"])]
+    tools = [
+        Tool(
+            "gh",
+            ops=[
+                Op("issue list", risk="read"),
+                Op("issue view", risk="read"),
+                Op("branch list", risk="read"),
+            ],
+        )
+    ]
     constraints = UNATTENDED + [
         Rule(
             "verify-freeform-claim",
@@ -411,8 +451,9 @@ class MarkStarted(Task):
 
 
 class GenerateBook(Task):
-    """Run the create-book-from-issue procedure, then commit, push the branch,
-    open the draft PR (or produce the compare-URL fallback)."""
+    """Run the create-book-from-issue procedure end to end: generate, verify
+    each page, and commit locally page-by-page. Leaves the branch built and
+    committed — nothing leaves the machine yet."""
 
     issue_number: int
     execution_mode: str
@@ -445,8 +486,7 @@ class GenerateBook(Task):
         ),
         Tool("headless-browser", ops=["render", "screenshot"]),
         Tool("webp-encoder", ops=["encode"]),
-        Tool("git", ops=["add", "commit", "push", "branch"], exclusive=True),
-        Tool("gh", ops=["pr create"]),
+        Tool("git", ops=["add", "commit", "branch"], exclusive=True),
     ]
     constraints = UNATTENDED + [
         Rule(
@@ -520,6 +560,41 @@ class GenerateBook(Task):
             why="the image-request Action keys on the branch name",
         ),
         Rule(
+            "commit-only-verified-pages",
+            "Nothing commits until a page fully verifies",
+            why="this is what makes any restart safe to resume",
+        ),
+    ]
+    undo = "Delete the local claude/book-* branch and its commits if generation did not complete"
+    on_failure = "abort"
+
+
+class PublishBook(Task):
+    """Push the built branch to the remote and open the draft PR (or produce
+    the compare-URL fallback). The routine's other irreversible act besides
+    MarkStarted."""
+
+    issue_number: int
+    book_id: str
+    branch: str
+    execution_mode: str
+    validator_errors: int
+    returns: PublishResult
+
+    tools = [
+        Tool("git", ops=[Op("push", risk="irreversible")], exclusive=True),
+        Tool("gh", ops=["pr create"]),
+    ]
+    constraints = UNATTENDED + [
+        Rule(
+            "push-before-pr",
+            "Push the branch to the remote before attempting to open the PR",
+            why="a PR cannot be opened against a branch the remote has "
+            "never seen; the compare-URL fallback below only makes sense "
+            "once the push has landed",
+            severity="must",
+        ),
+        Rule(
             "pr-closes-issue",
             "PR body must contain 'Closes #<issue-number>'",
             why="merge is what closes the request",
@@ -547,11 +622,6 @@ class GenerateBook(Task):
             "If gh pr create is not callable unattended, push anyway and "
             "use the GitHub compare URL as the deliverable link",
             why="the branch is the work; the PR is just its front door",
-        ),
-        Rule(
-            "commit-only-verified-pages",
-            "Nothing commits until a page fully verifies",
-            why="this is what makes any restart safe to resume",
         ),
     ]
     undo = "Delete the pushed claude/book-* branch if no PR or compare URL was produced"
@@ -688,7 +758,7 @@ class PushAlert(Task):
 
 class BookbankRun(Task):
     """Headless book generation: establish workspace, verify tooling, claim an
-    issue, build, PR, request art, notify. Fully unattended — never asks."""
+    issue, build, publish, request art, notify. Fully unattended — never asks."""
 
     freeform_context: str
     returns: RunReport
@@ -711,14 +781,25 @@ class BookbankRun(Task):
         if mark.marked
         else None
     )
-    art = (
-        OpenImageRequests(book_id=build.book_id, branch=build.branch)
+    publish = (
+        PublishBook(
+            issue_number=issue.number,
+            book_id=build.book_id,
+            branch=build.branch,
+            execution_mode=plugin.execution_mode,
+            validator_errors=build.validator_errors,
+        )
         if build.built
         else None
     )
+    art = (
+        OpenImageRequests(book_id=build.book_id, branch=build.branch)
+        if publish.published
+        else None
+    )
     notify = (
-        NotifyIssue(issue_number=issue.number, pr_url=build.pr_url)
-        if build.built
+        NotifyIssue(issue_number=issue.number, pr_url=publish.pr_url)
+        if publish.published
         else None
     )
     outcomes = [
@@ -763,6 +844,13 @@ class BookbankRun(Task):
             alert=True,
             stopped_at="generate_book",
             validator_errors=0,
+        ),
+        Outcome(
+            "generation_failed",
+            when=not publish.published,
+            alert=True,
+            stopped_at="publish_book",
+            validator_errors=build.validator_errors,
         ),
         Outcome(
             "published_with_errors",
@@ -841,10 +929,10 @@ class BookbankRun(Task):
         ),
         Rule(
             "shared-checkout-hands-off",
-            "WHEN GenerateBook is delegated to a separate executor "
-            "sharing this checkout, the orchestrator performs no git "
-            "operations in books_dir while it runs, and treats the "
-            "executor's untracked in-progress files as expected, not "
+            "WHEN GenerateBook or PublishBook is delegated to a separate "
+            "executor sharing this checkout, the orchestrator performs no "
+            "git operations in books_dir while either runs, and treats "
+            "the executor's untracked in-progress files as expected, not "
             "actionable. An inline build has one pair of hands and this "
             "does not apply",
             why="stated unconditionally, the rule reads as forbidding the "
@@ -862,4 +950,4 @@ class BookbankRun(Task):
         "operator_action": "Inspect the run transcript before re-dispatching.",
     }
     on_failure = "abort"
-    meta = {"version": "2.3.0", "dispatch": "manual|webhook", "repo": "sunprema/books"}
+    meta = {"version": "2.4.0", "dispatch": "manual|webhook", "repo": "sunprema/books"}

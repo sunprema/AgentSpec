@@ -124,8 +124,13 @@ CLI:
 - [x] BookBank fixture lints clean (or every finding is triaged and either
       fixed in the fixture or the rule is corrected) — triaged: 0 errors and
       exactly one true warning (AS031: GenerateBook carries 16 constraints),
-      pinned in `tests/test_lint_integration.py`; the fix is a spec-author
-      decision (decompose GenerateBook), not a lint bug
+      pinned in `tests/test_lint_integration.py`; the fix was a spec-author
+      decision (decompose GenerateBook), not a lint bug. Spec v2.4.0
+      (BookBank routine revision) made that call: GenerateBook split into
+      GenerateBook (local generate/verify/commit) and PublishBook
+      (push + PR) — each under the ~15-constraint ceiling on its own, so
+      the fixture now lints clean with no pinned warning left
+      (`tests/test_lint_integration.py::test_bookbank_is_clean`).
 
 ## Phase 3 — `aspec plan`
 

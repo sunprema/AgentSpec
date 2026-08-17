@@ -23,6 +23,7 @@ def test_inventory(module):
         "IssueRef",
         "StartMark",
         "BookBuild",
+        "PublishResult",
         "ImageRequests",
         "IssueNote",
         "Alert",
@@ -34,6 +35,7 @@ def test_inventory(module):
         "SelectIssue",
         "MarkStarted",
         "GenerateBook",
+        "PublishBook",
         "OpenImageRequests",
         "NotifyIssue",
         "PushAlert",
@@ -59,7 +61,7 @@ def test_run_report_contract(module):
     assert outcome.type.kind == "enum"
     assert len(outcome.type.values) == 8
     assert "published_with_errors" in outcome.type.values
-    assert len(report.field("stopped_at").type.values) == 6
+    assert len(report.field("stopped_at").type.values) == 7
     assert report.field("summary").max_length == 500
     assert report.field("validator_errors").ge == 0
 
@@ -67,12 +69,29 @@ def test_run_report_contract(module):
 def test_tool_declarations(module):
     build = module.tasks["GenerateBook"]
     tools = {tool.name: tool for tool in build.tools}
-    assert len(build.tools) == 8
+    assert len(build.tools) == 7
+    assert "gh" not in tools  # moved to PublishBook
     assert tools["bookbank-plugin"].strict
     assert tools["bookbank-plugin"].ops == ["create-book-from-issue"]
     assert tools["git"].exclusive
+    assert tools["git"].risk_of("push") == "mutate"  # push no longer here
     assert len(tools["python3"].scripts) == 3
     assert tools["read"].paths[0] == "<plugin_root>/skills/**"
+
+
+def test_publish_book_tool_declarations(module):
+    publish = module.tasks["PublishBook"]
+    tools = {tool.name: tool for tool in publish.tools}
+    assert len(publish.tools) == 2
+    assert tools["git"].exclusive
+    assert tools["git"].risk_of("push") == "irreversible"
+    assert tools["gh"].ops == ["pr create"]
+
+
+def test_op_risk_tagging(module):
+    select = module.tasks["SelectIssue"]
+    gh = next(t for t in select.tools if t.name == "gh")
+    assert all(gh.risk_of(op) == "read" for op in gh.ops)
 
 
 def test_failure_declarations(module):
@@ -106,6 +125,7 @@ def test_pipeline_and_gates(module):
         "issue",
         "mark",
         "build",
+        "publish",
         "art",
         "notify",
         "alert",
@@ -117,8 +137,9 @@ def test_pipeline_and_gates(module):
         "issue": "plugin.usable",
         "mark": "issue.proceed",
         "build": "mark.marked",
-        "art": "build.built",
-        "notify": "build.built",
+        "publish": "build.built",
+        "art": "publish.published",
+        "notify": "publish.published",
         "alert": None,
     }
     build = routine.bind("build")
@@ -133,7 +154,7 @@ def test_pipeline_and_gates(module):
 
 def test_orchestrator_declarations(module):
     routine = module.tasks["BookbankRun"]
-    assert routine.meta["version"] == "2.3.0"
+    assert routine.meta["version"] == "2.4.0"
     assert routine.on_failure.kind == "abort"
     assert set(routine.on_uncertain) == {
         "outcome",
@@ -145,5 +166,5 @@ def test_orchestrator_declarations(module):
     assert len(routine.constraints) == 3 + 7  # UNATTENDED + its own
     [outcomes] = routine.derivations
     assert outcomes.var == "outcomes" and outcomes.style == "outcomes"
-    assert len(outcomes.rows) == 8 and outcomes.has_catch_all
+    assert len(outcomes.rows) == 9 and outcomes.has_catch_all
     assert all({"outcome", "alert"} <= set(row.output) for row in outcomes.rows)

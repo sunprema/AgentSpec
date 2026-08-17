@@ -26,7 +26,7 @@ def test_payload_root_and_tasks(bookbank_payload):
     assert p["tasks"]["BookbankRun"]["is_orchestrator"]
 
     generate = p["tasks"]["GenerateBook"]
-    assert {t["name"] for t in generate["tools"]} >= {"bookbank-plugin", "git", "gh"}
+    assert {t["name"] for t in generate["tools"]} >= {"bookbank-plugin", "git"}
     plugin_tool = next(t for t in generate["tools"] if t["name"] == "bookbank-plugin")
     assert plugin_tool["strict"]
     git_tool = next(t for t in generate["tools"] if t["name"] == "git")
@@ -34,6 +34,9 @@ def test_payload_root_and_tasks(bookbank_payload):
     assert any(r["severity"] == "must" for r in generate["rules"])
     assert generate["undo"]
     assert generate["on_failure"] == "abort"
+
+    publish = p["tasks"]["PublishBook"]
+    assert {t["name"] for t in publish["tools"]} == {"git", "gh"}
 
 
 def test_payload_schema_fields_and_bounds(bookbank_payload):
@@ -47,9 +50,9 @@ def test_payload_schema_fields_and_bounds(bookbank_payload):
 def test_payload_pipeline_waves(bookbank_payload):
     pipe = bookbank_payload["pipeline"]
     assert pipe["orchestrator"] == "BookbankRun"
-    assert len(pipe["waves"]) == 7
-    assert sorted(pipe["waves"][5]) == ["art", "notify", "outcomes"]
-    assert pipe["waves"][6] == ["alert"]
+    assert len(pipe["waves"]) == 8
+    assert sorted(pipe["waves"][6]) == ["art", "notify", "outcomes"]
+    assert pipe["waves"][7] == ["alert"]
     outcomes = next(s for s in pipe["steps"] if s["var"] == "outcomes")
     assert outcomes["task"] == "<derived>" and outcomes["needs"] == []
     assert pipe["inputs"] == ["freeform_context"]
@@ -158,6 +161,80 @@ def test_server_serves_ui_and_payload(fixtures_dir):
         thread.join(timeout=5)
 
 
+def test_prompt_endpoint(fixtures_dir):
+    httpd, state, stop = create_server(fixtures_dir / "bookbank_routine.aspec.py", port=0)
+    port = httpd.server_address[1]
+    import threading
+
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, body = _get(port, "/api/prompt?task=SelectIssue")
+        payload = json.loads(body)
+        assert status == 200
+        assert payload["used_trace"] is False
+        assert "# Task: SelectIssue" in payload["prompt"]
+        assert "verify-freeform-claim" in payload["prompt"]  # SelectIssue's own rule
+        assert "gates-are-clean-stops" in payload["prompt"]  # inherited orchestrator rule
+
+        # the orchestrator itself: no reducer-prompt preview (yet)
+        status, body = _get(port, "/api/prompt?task=BookbankRun")
+        assert status == 400
+        assert "orchestrator" in json.loads(body)["error"]
+
+        status, body = _get(port, "/api/prompt?task=NoSuchTask")
+        assert status == 404
+
+        status, body = _get(port, "/api/prompt")
+        assert status == 400
+
+        # dev mode only adds the clarifying-question line for a task that
+        # actually declares doubt (on_uncertain / Escalate)
+        status, body = _get(port, "/api/prompt?task=ResolveWorkspace&dev=1")
+        assert "clarifying question" in json.loads(body)["prompt"]
+        status, body = _get(port, "/api/prompt?task=ResolveWorkspace&dev=0")
+        assert "clarifying question" not in json.loads(body)["prompt"]
+        status, body = _get(port, "/api/prompt?task=GenerateBook&dev=1")
+        assert "clarifying question" not in json.loads(body)["prompt"]  # no doubt declared
+    finally:
+        stop.set()
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+
+
+def test_prompt_uses_trace_output_when_available(fixtures_dir):
+    from agentspec.parser import parse_file
+    from agentspec.studio.prompt import render_task_prompt
+
+    module = parse_file(fixtures_dir / "bookbank_routine.aspec.py")
+    trace = {
+        "steps": [
+            {"var": "issue", "task": "SelectIssue", "status": "ok", "output": {"number": 122}},
+        ]
+    }
+    prompt, used_trace = render_task_prompt(module, "GenerateBook", trace=trace)
+    assert used_trace is True
+    assert '"issue_number": 122' in prompt
+
+
+def test_prompt_rejects_task_with_no_named_returns_schema():
+    from agentspec.parser import parse_source
+    from agentspec.studio.prompt import render_task_prompt
+
+    src = '''"""Doc."""
+from agentspec import Task
+
+class Solo(Task):
+    """Do the one thing."""
+    returns: str
+    on_failure = {"ok": False}
+'''
+    module = parse_source(src, "solo.aspec.py")
+    with pytest.raises(ValueError, match="no named returns schema"):
+        render_task_prompt(module, "Solo")
+
+
 def test_state_refresh_on_change_and_error_keeps_last_good(fixtures_dir, tmp_path):
     spec = tmp_path / "spec.aspec.py"
     shutil.copy(fixtures_dir / "minimal_good.aspec.py", spec)
@@ -192,7 +269,7 @@ def test_payload_reduction_table(bookbank_payload):
     assert table["source"] == "derivation"
     assert table["name"] == "outcomes"
     assert table["fields"] == ["alert", "outcome", "stopped_at", "validator_errors"]
-    assert len(table["rows"]) == 8
+    assert len(table["rows"]) == 9
     assert table["rows"][-1]["condition"] == "otherwise"
     assert table["rows"][0]["values"]["outcome"] == "workspace_failed"
     assert table["rows"][-2]["values"]["validator_errors"] == "build.validator_errors"

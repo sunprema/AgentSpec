@@ -23,6 +23,7 @@ def test_bookbank_waves(bookbank):
         ["issue"],
         ["mark"],
         ["build"],
+        ["publish"],
         ["art", "notify", "outcomes"],
         ["alert"],
     ]
@@ -46,10 +47,11 @@ def test_bookbank_joins_and_deps(bookbank):
 
 def test_bookbank_gate_skips(bookbank):
     assert bookbank.gate_skips == {
-        "plugin": ["issue", "mark", "build", "art", "notify"],
-        "issue": ["mark", "build", "art", "notify"],
-        "mark": ["build", "art", "notify"],
-        "build": ["art", "notify"],
+        "plugin": ["issue", "mark", "build", "publish", "art", "notify"],
+        "issue": ["mark", "build", "publish", "art", "notify"],
+        "mark": ["build", "publish", "art", "notify"],
+        "build": ["publish", "art", "notify"],
+        "publish": ["art", "notify"],
         "art": [],
         "notify": [],
     }

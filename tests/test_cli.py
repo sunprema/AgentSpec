@@ -96,7 +96,7 @@ def test_lint_missing_file(capsys):
 def test_plan_text_output(capsys, fixtures_dir):
     assert main(["plan", str(fixtures_dir / "bookbank_routine.aspec.py")]) == 0
     out = capsys.readouterr().out
-    assert "BookbankRun — 9 steps across 7 waves" in out
+    assert "BookbankRun — 10 steps across 8 waves" in out
     assert "plugin = VerifyPlugin  [gate: workspace.resolved]" in out
     assert "false gates skip:" in out
 

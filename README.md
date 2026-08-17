@@ -24,8 +24,8 @@ aspec eval   # fixture-based behavioral tests
 aspec run    # guarded execution (--dev: clarifications at declared doubt
              # points, reported as spec gaps; production is always unattended)
 aspec studio # live spec workbench: canvas, inspector, gate simulator,
-             # run-trace overlay (--trace), static HTML export (--export),
-             # pins + MCP for agent collaboration
+             # rendered-prompt preview per task, run-trace overlay (--trace),
+             # static HTML export (--export), pins + MCP for agent collaboration
 aspec lsp    # language server over stdio: diagnostics, hover, navigation,
              # completions, quickfixes (VS Code shim in editors/vscode/)
 ```
@@ -59,7 +59,11 @@ stop — *"no clarifications were needed"* is the readiness signal.
 `aspec studio` opens the spec as a live workbench: the pipeline laid out by
 execution wave, a full inspector (contracts, rules, tools, failure
 declarations), lint findings as node badges, and a gate simulator — all
-derived from the parsed SpecModel, re-parsed on every save.
+derived from the parsed SpecModel, re-parsed on every save. A Prompt tab
+renders the exact guarded call a step would receive (spec §9's pruned
+contract: its own docstring, composed rules, output schema) — example
+inputs synthesized from the declared types, or real values pulled from a
+loaded `--trace` where one covers that step.
 
 The routine's endings are a declared `outcomes` list (spec 2.6) — every
 terminal state's name, condition, report fields, and alerting in one

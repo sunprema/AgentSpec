@@ -46,7 +46,7 @@ def test_bookbank_uses_the_construct_not_prose(fixtures_dir):
     module = parse_file(fixtures_dir / "bookbank_routine.aspec.py")
     assert extract_tables(module) == []
     [route] = module.tasks["BookbankRun"].derivations
-    assert len(route.rows) == 8
+    assert len(route.rows) == 9
     assert route.rows[4].raw == "not mark.marked"
     assert route.rows[4].output["stopped_at"].value == "mark_started"
 
