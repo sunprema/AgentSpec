@@ -143,6 +143,12 @@ def test_server_serves_ui_and_payload(fixtures_dir):
         assert snap["version"] == 1
         assert snap["errors"] == []
         assert snap["payload"]["root"] == "BookbankRun"
+        # the source pane's text and each step's sync anchor
+        assert snap["source"].startswith('"""BookBank headless book generation')
+        steps = {s["var"]: s for s in snap["payload"]["pipeline"]["steps"]}
+        src_lines = snap["source"].split("\n")
+        assert "workspace = ResolveWorkspace()" in src_lines[steps["workspace"]["line"] - 1]
+        assert "outcomes = [" in src_lines[steps["outcomes"]["line"] - 1]
         status, _ = _get(port, "/nope")
         assert status == 404
     finally:
@@ -200,6 +206,7 @@ def test_export_self_contained(fixtures_dir, tmp_path, capsys):
     assert "wrote" in capsys.readouterr().out
     html = out.read_text()
     assert "window.EMBEDDED_SPEC" in html
+    assert "window.EMBEDDED_SOURCE" in html  # the source pane works offline too
     assert '"root": "BookbankRun"' in html
     assert "aspec studio" in html
     assert html.count("window.EMBEDDED_SPEC = {") == 1  # injected exactly once

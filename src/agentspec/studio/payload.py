@@ -195,6 +195,7 @@ def _pipeline(module: SpecModule, root: TaskDef) -> dict[str, Any]:
                     "filter": None,
                     "serialized": False,
                     "needs": [],  # a derivation always yields; it never skips
+                    "line": derivations[step.var].loc.line,
                 }
             )
             continue
@@ -214,6 +215,7 @@ def _pipeline(module: SpecModule, root: TaskDef) -> dict[str, Any]:
                 "filter": step.filter,
                 "serialized": step.serialized,
                 "needs": _needs(module, root, bind),
+                "line": bind.loc.line,
             }
         )
     return {

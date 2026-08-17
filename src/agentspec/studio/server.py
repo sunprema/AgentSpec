@@ -2,7 +2,7 @@
 
 GET  /           the packaged single-file UI
 GET  /api/spec   {"version", "file", "errors", "payload", "trace",
-                  "pins", "highlight"}
+                  "pins", "highlight", "source"}
 POST /api/pin    {"var": "build", "pinned": true}
 POST /api/note   {"var": "build", "note": "..."}
 POST /mcp        JSON-RPC: get_spec, get_pinned, highlight_node — so a
@@ -42,6 +42,7 @@ class StudioState:
         self.lock = threading.Lock()
         self.version = 0
         self.payload: dict[str, Any] | None = None
+        self.source: str | None = None
         self.errors: list[str] = []
         self.trace: dict[str, Any] | None = None
         self.pins: dict[str, str] = {}  # step var -> note ("" = pinned, no note)
@@ -52,8 +53,12 @@ class StudioState:
     def refresh(self) -> None:
         errors: list[str] = []
         payload = None
+        source = None
         try:
             self.mtimes[self.path] = self.path.stat().st_mtime
+            # the source pane shows the file as saved, even mid-edit with
+            # parse errors — the error banner explains, the text stays honest
+            source = self.path.read_text()
             module = parse_file(self.path, cache={})
             errors = [d.render() for d in module.errors]
             payload = None if errors else build_payload(module)
@@ -64,6 +69,8 @@ class StudioState:
             self.errors = errors
             if payload is not None:
                 self.payload = payload
+            if source is not None:
+                self.source = source
             self.trace = trace
             self.version += 1
 
@@ -93,6 +100,7 @@ class StudioState:
                 "file": str(self.path),
                 "errors": self.errors,
                 "payload": self.payload,
+                "source": self.source,
                 "trace": self.trace,
                 "pins": dict(self.pins),
                 "highlight": self.highlight,
@@ -121,7 +129,11 @@ def export_html(spec_path: str | Path) -> str:
         rendered = "; ".join(d.render() for d in module.errors)
         raise ValueError(f"spec has parse errors: {rendered}")
     payload = build_payload(module)
-    embed = f"<script>window.EMBEDDED_SPEC = {json.dumps(payload)};</script>"
+    source = Path(spec_path).read_text()
+    embed = (
+        f"<script>window.EMBEDDED_SPEC = {json.dumps(payload)};"
+        f"window.EMBEDDED_SOURCE = {json.dumps(source)};</script>"
+    )
     html = _ui_html().decode()
     if EMBED_MARKER not in html:
         raise ValueError("ui.html embed marker missing")

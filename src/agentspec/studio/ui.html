@@ -31,6 +31,13 @@ header .logo span{color:var(--accent)}
 #simbar label.off{color:var(--err)}
 #simbar button{font:11px var(--sans);background:none;border:1px solid var(--line);color:var(--dim);border-radius:5px;padding:2px 8px;cursor:pointer}
 main{flex:1;display:flex;min-height:0}
+#srcpanel{width:430px;min-width:260px;border-right:1px solid var(--line);background:var(--panel);overflow:auto;display:none;font:12px var(--mono);line-height:1.55;padding:8px 0}
+#srcpanel.on{display:block}
+#srcpanel .srcline{display:flex;white-space:pre}
+#srcpanel .srcline .ln{color:#3d4a68;text-align:right;min-width:44px;padding-right:10px;user-select:none;flex:none}
+#srcpanel .srcline .cd{color:var(--text);padding-right:14px}
+#srcpanel .srcline.hl{background:#1d2a45;box-shadow:inset 3px 0 0 var(--accent)}
+#srcpanel .srcline.hl2{background:#171f33;box-shadow:inset 3px 0 0 var(--violet)}
 #canvasWrap{flex:1;overflow:auto;position:relative;text-align:center}
 #canvas{display:inline-block}
 #empty{color:var(--dim);padding:40px;font-size:14px}
@@ -122,6 +129,7 @@ svg text{font-family:var(--sans);user-select:none}
   <div class="chip" id="rootchip"></div>
   <div class="spacer"></div>
   <div class="toggles">
+    <div class="tgl on" id="srctgl">Source</div>
     <div class="tgl on" data-layer="gates">Gates</div>
     <div class="tgl on" data-layer="failure">Failure</div>
     <div class="tgl" data-layer="tools">Tools</div>
@@ -137,6 +145,7 @@ svg text{font-family:var(--sans);user-select:none}
   <button id="simreset">reset</button>
 </div>
 <main>
+  <div id="srcpanel" class="on"><div class="muted" style="padding:12px">waiting for the spec source…</div></div>
   <div id="canvasWrap"><div id="empty">waiting for a parsed spec…</div><svg id="canvas"></svg></div>
   <div id="side">
     <div id="tabs">
@@ -151,7 +160,7 @@ svg text{font-family:var(--sans);user-select:none}
 <script>
 "use strict";
 const $=id=>document.getElementById(id);
-const S={version:-1,data:null,sel:null,layers:{gates:true,failure:true,tools:false,waves:false,trace:false},
+const S={version:-1,data:null,src:null,sel:null,layers:{gates:true,failure:true,tools:false,waves:false,trace:false},
          sim:false,gateVals:{},skipped:new Set(),trace:null,pins:{},traceSeen:false};
 
 const NW=190, NH=58, GX=46, GY=64, PAD=40;
@@ -161,7 +170,7 @@ function esc(s){return (s??"").toString().replace(/[&<>"]/g,c=>({"&":"&amp;","<"
 // ---------- polling ----------
 async function poll(){
   if(window.EMBEDDED_SPEC){
-    if(S.version<0){S.version=1;S.data=window.EMBEDDED_SPEC;onData();}
+    if(S.version<0){S.version=1;S.data=window.EMBEDDED_SPEC;S.src=window.EMBEDDED_SOURCE??null;onData();}
     return; // static export: no server, no polling
   }
   try{
@@ -176,8 +185,13 @@ async function poll(){
       $("tracetgl").style.display=S.trace?"":"none";
       $("tracetgl").classList.toggle("on",S.layers.trace);
       if(st.payload){S.data=st.payload;}
+      if(st.source!=null){S.src=st.source;}
       if(S.data) onData();
-      if(st.highlight){flashNode(st.highlight);fetch("/api/highlight_done",{method:"POST"});}
+      if(st.highlight){
+        flashNode(st.highlight);
+        syncSource(S.data?.pipeline?.steps.find(s=>s.var===st.highlight)?.line);
+        fetch("/api/highlight_done",{method:"POST"});
+      }
     }
   }catch(e){/* server restarting; keep last view */}
   setTimeout(poll,1500);
@@ -199,10 +213,46 @@ function onData(){
   if(!S.sel&&d.root) S.sel=d.root;  // default: the orchestrator + its reduction table
   const gated=(d.pipeline?.steps||[]).filter(s=>s.gate);
   for(const s of gated) if(!(s.gate in S.gateVals)) S.gateVals[s.gate]=true;
+  renderSource();
   computeSkips(); renderAll();
+  syncSource(null,false);  // restore the highlight without stealing scroll
 }
 
 function renderAll(){renderCanvas();renderSimBar();renderIssues();renderInspector();}
+
+// ---------- source panel ----------
+function renderSource(){
+  const panel=$("srcpanel");
+  if(S.src==null){panel.innerHTML=`<div class="muted" style="padding:12px">source unavailable</div>`;return;}
+  panel.innerHTML=S.src.split("\n").map((l,i)=>
+    `<div class="srcline" data-l="${i+1}"><span class="ln">${i+1}</span><span class="cd">${esc(l)||" "}</span></div>`).join("");
+}
+function syncSource(line,scroll=true){
+  // line: explicit target (issue clicks); otherwise derived from S.sel —
+  // primary = the step's bind in the orchestrator, secondary = its task class
+  const panel=$("srcpanel");
+  if(!panel.classList.contains("on")||!S.data||S.src==null) return;
+  panel.querySelectorAll(".srcline.hl,.srcline.hl2").forEach(x=>x.classList.remove("hl","hl2"));
+  let primary=line??null, secondary=null;
+  if(primary==null){
+    const d=S.data;
+    const st=d.pipeline?.steps.find(s=>s.var===S.sel);
+    if(S.sel==="_inputs"&&d.root) primary=d.tasks[d.root]?.line;
+    else if(st){
+      primary=st.line;
+      const t=d.tasks[st.task];
+      if(t&&t.line&&t.line!==primary) secondary=t.line;
+      // an imported task's line points into another file — verify before marking
+      if(secondary&&!(S.src.split("\n")[secondary-1]||"").includes("class "+st.task)) secondary=null;
+    }
+    else if(d.tasks[S.sel]) primary=d.tasks[S.sel].line;
+  }
+  if(!primary) return;
+  const mark=(l,cls)=>{const el=panel.querySelector(`[data-l="${l}"]`);if(el)el.classList.add(cls);return el;};
+  if(secondary) mark(secondary,"hl2");
+  const el=mark(primary,"hl");
+  if(el&&scroll) el.scrollIntoView({block:"center",behavior:"smooth"});
+}
 
 // ---------- layout ----------
 function layout(){
@@ -301,7 +351,7 @@ function renderCanvas(){
   }
   svg.innerHTML=out;
 
-  svg.querySelectorAll(".node").forEach(n=>n.addEventListener("click",()=>{S.sel=n.dataset.node;renderAll();}));
+  svg.querySelectorAll(".node").forEach(n=>n.addEventListener("click",()=>{S.sel=n.dataset.node;renderAll();syncSource();}));
   svg.querySelectorAll(".edge-hit").forEach(h=>{
     h.addEventListener("mousemove",ev=>showEdgeTip(ev,h.dataset.edge));
     h.addEventListener("mouseleave",hideTip);
@@ -456,11 +506,13 @@ function renderIssues(){
     `<div class="issue ${i.severity}" data-i="${n}"><span class="code">${esc(i.code)}</span>${esc(i.message)}<br><span class="loc">line ${i.line}${i.owner?` · ${esc(i.owner)}`:""}</span></div>`).join("");
   el.querySelectorAll(".issue").forEach(node=>node.addEventListener("click",()=>{
     const i=lint[+node.dataset.i];
-    if(!i.owner) return;
-    const st=S.data.pipeline?.steps.find(s=>s.task===i.owner);
-    S.sel=st?st.var:i.owner;
-    document.querySelector('[data-tab="inspector"]').click();
-    renderAll();
+    if(i.owner){
+      const st=S.data.pipeline?.steps.find(s=>s.task===i.owner);
+      S.sel=st?st.var:i.owner;
+      document.querySelector('[data-tab="inspector"]').click();
+      renderAll();
+    }
+    if(i.line) syncSource(i.line);  // the finding's own line beats the owner's
   }));
 }
 
@@ -469,6 +521,11 @@ document.querySelectorAll(".tgl[data-layer]").forEach(t=>t.addEventListener("cli
   const l=t.dataset.layer; S.layers[l]=!S.layers[l]; t.classList.toggle("on",S.layers[l]); renderCanvas();
 }));
 $("simtgl").addEventListener("click",()=>{S.sim=!S.sim;computeSkips();renderAll();});
+$("srctgl").addEventListener("click",()=>{
+  const on=$("srcpanel").classList.toggle("on");
+  $("srctgl").classList.toggle("on",on);
+  if(on) syncSource();
+});
 $("simreset").addEventListener("click",()=>{for(const k in S.gateVals)S.gateVals[k]=true;computeSkips();renderAll();});
 document.querySelectorAll("#tabs .tab").forEach(t=>t.addEventListener("click",()=>{
   document.querySelectorAll("#tabs .tab").forEach(x=>x.classList.toggle("on",x===t));
