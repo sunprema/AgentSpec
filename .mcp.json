@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "aspec-studio": {
+      "type": "http",
+      "url": "http://localhost:7788/mcp"
+    }
+  }
+}
